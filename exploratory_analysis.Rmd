@@ -1,0 +1,226 @@
+---
+title: "Exploratory data analysis-1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+```
+
+Added columns: ``genP`` full generation probability weighted by VJ usage for our data (aging); ``ageing_occur`` - number of occurrences in aging dataset, should be normalized by ``29,989,055`` - total number of rearrangements in aging data.
+
+```{r}
+TOTAL_REARRANGEMENTS_AGING = 29989055
+
+df = read.table("VDJDB_fullP.txt", header=T, sep="\t")
+
+# Fix issue with SLYNTVATL epitope labelled as CMV in 1555537 -> should put an issue in vdjdb-db!
+# which is actually HIV
+df$antigen.species = as.factor(ifelse(df$antigen.epitope == "SLYNTVATL", "HIV-1", as.character(df$antigen.species)))
+
+df$obsP = df$ageing_occur / TOTAL_REARRANGEMENTS_AGING
+```
+
+Only intercept (constant) bias is present (from plot):
+
+```{r}
+ggplot(df, aes(x=obsP, y=genP)) +
+  geom_point(shape=21)+
+  geom_smooth(method="lm") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  scale_x_log10(limits = c(1e-13, 1e-3)) +
+  scale_y_log10(limits = c(1e-13, 1e-3)) +
+  theme_bw()
+
+# Not quite obvious from ANOVA..
+
+lmP = lm(log10(obsP) ~ log10(genP), subset(df, obsP > 0 & genP > 0))
+summary(lmP)
+anova(lmP)
+
+# Lets try GLM
+
+glmP = glm(obsP * TOTAL_REARRANGEMENTS_AGING ~ genP, data = df, family = poisson)
+summary(glmP)
+```
+
+### Comparing genP across epitopes
+
+Filter epitopes with few representative TCRs, remove everything with 0 generation prob
+
+```{r}
+df.tcr.per.epitope = df %>%
+  filter(genP > 0) %>%
+  group_by(antigen.epitope) %>%
+  dplyr::summarise(count = n(), genP_med = median(genP)) %>%
+  filter(count >= 30)
+```
+
+Compare rearrangement prob across epitopes and their parent species
+
+```{r}
+df.1 = subset(df, antigen.epitope %in% df.tcr.per.epitope$antigen.epitope & genP > 0)
+df.1$antigen.epitope = factor(df.1$antigen.epitope, levels = df.tcr.per.epitope$antigen.epitope[order(df.tcr.per.epitope$genP_med)])
+
+ggplot(df.1, aes(x=antigen.epitope, group = antigen.epitope, y=genP, fill = antigen.species)) +
+  geom_violin() + stat_summary(fun.y=median, geom="point", shape=21, fill = "white", color="black") +
+  scale_y_log10() +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set3") +
+  theme_bw()
+
+ggplot(df.1, aes(x=antigen.species, group = antigen.species, y=genP)) +
+  geom_violin() + stat_summary(fun.y=median, geom="point", shape=21, fill = "red", color="white") +
+  geom_hline(yintercept = median(df.1$genP), linetype = "dashed", color = "red") +
+  scale_y_log10() +
+  coord_flip() +
+  theme_bw()
+
+a1 = aov(log10(genP) ~ antigen.epitope, df.1)
+summary(a1)
+
+a2 = aov(log10(genP) ~ antigen.species, df.1)
+summary(a2)
+TukeyHSD(a2, "antigen.species")
+```
+
+### Comparing selection prob
+
+Pre-filter
+
+```{r}
+df.tcr.per.epitope.2 = df %>%
+  filter(genP > 0 & obsP > 0) %>%
+  group_by(antigen.epitope) %>%
+  dplyr::summarise(count = n(), logOddsSel_med = median(log10(obsP) - log10(genP))) %>%
+  filter(count >= 30)
+
+df.2 = subset(df, antigen.epitope %in% df.tcr.per.epitope.2$antigen.epitope & genP > 0 & obsP > 0)
+df.2$logOddsSel = with(df.2, log10(obsP) - log10(genP))
+df.2$antigen.epitope = factor(df.2$antigen.epitope, levels = df.tcr.per.epitope.2$antigen.epitope[order(df.tcr.per.epitope.2$logOddsSel_med)])
+
+med_log_odds = median(df.2$logOddsSel)
+```
+
+Compare selection factors
+
+```{r}
+ggplot(df.2, aes(x=antigen.epitope, group = antigen.epitope, y=logOddsSel, fill = antigen.species)) +
+  geom_violin() + stat_summary(fun.y=median, geom="point", shape=21, fill = "white", color="black") +
+  geom_hline(yintercept = med_log_odds, linetype = "dashed", color = "black") +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set3") +
+  theme_bw()
+
+ggplot(df.2, aes(x=antigen.species, group = antigen.species, y=logOddsSel)) +
+  geom_violin() + stat_summary(fun.y=median, geom="point", shape=21, fill = "red", color="white") +
+  geom_hline(yintercept = med_log_odds, linetype = "dashed", color = "red") +
+  coord_flip() +
+  theme_bw()
+
+a1 = aov(logOddsSel ~ antigen.epitope, df.2)
+summary(a1)
+
+a2 = aov(logOddsSel ~ antigen.species, df.2)
+summary(a2)
+TukeyHSD(a2, "antigen.species")
+```
+
+## Summary so far
+
+- There is a difference in both rearrangement prob and selection prob across epitopes
+- There is large difference in selection prob across species, no such difference for rearrangement prob
+- Difference in selection prob shows that EBV and CMV are favored compared to other species. This can be due to clonal expansions, but: 1) no such difference for Flu 2) we don't account for clonal size, only counting unique rearrangements 3) A02-NLVP is not the top favoured epitope
+
+## Features
+
+### Epitope len for MHCI
+
+Its more likely to generate TCR recognizing longer epitope, however the observed occurrence frequency is independent of the length of cognate epitope => differences in selection.
+
+```{r}
+df.epi = df %>% filter(mhc.class=="MHCI" & genP > 0 & obsP > 0)
+df.epi$epi.len = nchar(as.character(df.epi$antigen.epitope))
+df.epi.s = df.epi %>%
+  group_by(epi.len) %>%
+  dplyr::summarise(count = n()) %>%
+  arrange(-count)
+print(df.epi.s)
+
+df.epi = df.epi %>% filter(epi.len < 12)
+
+ggplot(df.epi, aes(x=epi.len, group=epi.len, y=genP)) +
+  geom_violin() + geom_boxplot(color="red", width=0.2) +
+  scale_y_log10() +
+  theme_bw()
+
+summary(lm(log10(genP) ~ epi.len, df.epi))
+
+ggplot(df.epi, aes(x=epi.len, group=epi.len, y=obsP)) +
+  geom_violin() + geom_boxplot(color="red", width=0.2) +
+  scale_y_log10() +
+  theme_bw()
+
+summary(lm(log10(obsP) ~ epi.len, df.epi))
+
+ggplot(df.epi, aes(x=epi.len, group=epi.len, y=log10(obsP)-log10(genP))) +
+  geom_violin() + geom_boxplot(color="red", width=0.2) +
+  theme_bw()
+
+summary(lm(log10(obsP)-log10(genP) ~ epi.len, df.epi))
+```
+
+### CDR3 features
+
+Load annotations produced by VDJdb/Annotate
+
+```{r}
+# some dummy stuff 
+df.ann = read.table("ann.aging_annot_0.txt", header = T, sep = "\t") %>%
+  merge(df) %>%
+  filter(obsP > 0 & genP > 0) %>%
+  mutate(logOddsSel = log10(obsP) - log10(genP))
+```
+
+The only effect comes from length..
+
+```{r}
+ggplot(df.ann, aes(x=base.cdr3length / 3, y=logOddsSel)) +
+  geom_violin(aes(group = base.cdr3length / 3)) + 
+  geom_boxplot(aes(group = base.cdr3length / 3), color="red", width=0.2) +
+  geom_smooth() +
+  theme_bw()
+
+ggplot(df.ann, aes(x=aaprop.strength, y=logOddsSel)) +
+  geom_violin(aes(group = aaprop.strength)) + 
+  geom_boxplot(aes(group = aaprop.strength), color="red", width=0.2) +
+  geom_smooth() +
+  theme_bw()
+
+ggplot(df.ann, aes(x=aaprop.polarity, y=logOddsSel)) +
+  geom_violin(aes(group = aaprop.polarity)) + 
+  geom_boxplot(aes(group = aaprop.polarity), color="red", width=0.2) +
+  geom_smooth() +
+  theme_bw()
+
+ggplot(df.ann, aes(x=aaprop.charge, y=logOddsSel)) +
+  geom_violin(aes(group = aaprop.charge)) + 
+  geom_boxplot(aes(group = aaprop.charge), color="red", width=0.2) +
+  geom_smooth() +
+  theme_bw()
+
+ggplot(df.ann, aes(x=round(aaprop.hydropathy), y=logOddsSel)) +
+  geom_violin(aes(group = round(aaprop.hydropathy))) + 
+  geom_boxplot(aes(group = round(aaprop.hydropathy)), color="red", width=0.2) +
+  geom_smooth() +
+  theme_bw()
+```
+
+## Further work
+
+Need to annotate Robins data. Check HLA-mediated effect. Can we consistently rule out clonal expansions.. well we can show effect both in CMV+ and CMV- patients for specific clonotypes
