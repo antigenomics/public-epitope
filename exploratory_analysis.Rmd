@@ -302,6 +302,26 @@ summary(a2)
 TukeyHSD(a2, "v.family")
 ```
 
+## Comparing with iEDB data
+
+```{r}
+df.iedb = read.table("iedb.results.txt", header = T, sep = "\t")
+
+df.iedb.s = df.iedb %>%
+  #filter(assay.result == "Negative") %>%
+  group_by(antigen.epitope) %>%
+  dplyr::summarise(count = length(unique(authors)))
+
+df.iedb.s$r = rank(df.iedb.s$count)
+
+df.s = merge(df, df.iedb.s)
+
+ggplot(df.s, aes(x=r, group=r, y=genP)) +
+  geom_violin() +
+  scale_y_log10() + 
+  facet_wrap(~antigen.species)
+```
+
 ## Further work
 
 Need to annotate Robins data. Check HLA-mediated effect. Can we consistently rule out clonal expansions.. well we can show effect both in CMV+ and CMV- patients for specific clonotypes

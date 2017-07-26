@@ -12,6 +12,7 @@ Variable-Joining segment usage:
 Annotated data for aging. Note that the pooled aging dataset has ``N=17,955,918`` unique CDR3 amino acid sequences from ``R=29,989,055`` rearrangements (this is the sum of the observed diversity, i.e. number of clonotypes V+J+CDR3nt, from all samples).
 
 * The annotation was performed by allowing 0, 1 and 2 amino acid substitutions. The results are stored in ``aging_annot_0.txt.gz`` (around 3000 hits), ``aging_annot_1.txt.gz`` and ``aging_annot_2.txt.gz`` (very large, almost 4 mln hits).
+* Umbilical cord blood annotations, ``ucb_annot_0.txt.gz``. The total number of rearrangements in a pool of 8 UCB samples is ``N=4,666,498``.
 
 Each entry in the ``aging_annot_X.txt.gz`` file has the following important fields:
 
