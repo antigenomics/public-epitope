@@ -24,17 +24,17 @@ TOTAL_REARRANGEMENTS_AGING = 29989055
 
 df = read.table("VDJDB_fullP.txt", header=T, sep="\t")
 
-# Fix issue with SLYNTVATL epitope labelled as CMV in 1555537 -> should put an issue in vdjdb-db!
+# Fix issue with SLYNTVATL epitope labelled as CMV in 21555537 -> should put an issue in vdjdb-db!
 # which is actually HIV
 df$antigen.species = as.factor(ifelse(df$antigen.epitope == "SLYNTVATL", "HIV-1", as.character(df$antigen.species)))
 
-df$obsP = df$ageing_occur / TOTAL_REARRANGEMENTS_AGING
+df$obsP = df$ageing_occur_1mism / TOTAL_REARRANGEMENTS_AGING
 ```
 
 Only intercept (constant) bias is present (from plot):
 
 ```{r}
-ggplot(df, aes(x=obsP, y=genP)) +
+ggplot(df, aes(x=obsP, y=genP_1mism)) +
   geom_point(shape=21)+
   geom_smooth(method="lm") +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
@@ -302,24 +302,60 @@ summary(a2)
 TukeyHSD(a2, "v.family")
 ```
 
-## Comparing with iEDB data
+## Cord blood data
 
 ```{r}
+df.ucb = read.table("ucb_annot_0.txt.gz", header=T, sep="\t") %>%
+  merge(df)
+
+df.ucb$obsP_ucb = df.ucb$occurrences / 4666498
+df.ucb$obsP_age = (df.ucb$ageing_occur - df.ucb$occurrences) / (29989055 - 4666498)
+
+ggplot(df.ucb) +
+  geom_point(aes(x=obsP_age, y=genP), color="black") +
+  geom_point(aes(x=obsP_ucb, y=genP), color="blue") +
+  scale_x_log10() +
+  scale_y_log10()
+
+ggplot(df.ucb) +
+  geom_point(aes(x=obsP_age, y=obsP_ucb), color="black") +
+  geom_abline(color="red", linetype="dashed") +
+  scale_x_log10() +
+  scale_y_log10()
+
+ggplot(df.ucb, aes(x=antigen.species, y=obsP_age/obsP_ucb)) +
+  geom_violin() +
+  geom_boxplot(color="red", width=0.2) +
+  scale_y_log10() +
+  coord_flip()
+```
+
+## Comparing with iEDB data
+
+```
 df.iedb = read.table("iedb.results.txt", header = T, sep = "\t")
 
 df.iedb.s = df.iedb %>%
-  #filter(assay.result == "Negative") %>%
+  filter(assay.type.1 %in% c("proliferation", "cytotoxicity", "IFNg release"),
+         antigen.epitope %in% df$antigen.epitope) %>%
+  group_by(antigen.epitope, assay.result) %>%
+  dplyr::summarise(count = length(unique(authors))) %>%
+  ungroup %>%
   group_by(antigen.epitope) %>%
-  dplyr::summarise(count = length(unique(authors)))
+  mutate(total = sum(count))
 
-df.iedb.s$r = rank(df.iedb.s$count)
+df.iedb.s$freq = df.iedb.s$count / df.iedb.s$total
+
+df.iedb.s = df.iedb.s %>%
+  group_by(antigen.epitope) %>%
+  filter(assay.result == "Negative")
 
 df.s = merge(df, df.iedb.s)
 
-ggplot(df.s, aes(x=r, group=r, y=genP)) +
+
+ggplot(df.s %>% filter(antigen.species == "CMV"), aes(x=freq, group=freq, y=genP)) +
   geom_violin() +
-  scale_y_log10() + 
-  facet_wrap(~antigen.species)
+  scale_y_log10()
 ```
 
 ## Further work

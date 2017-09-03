@@ -1,15 +1,20 @@
 ---
 title: "Generation model"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Basic
+
 ```{r}
 library(dplyr)
 library(ggplot2)
+library(lsr)
 TOTAL_REARRANGEMENTS_AGING = 29989055
 
 df = read.table("VDJDB_fullP.txt", header=T, sep="\t")
@@ -18,11 +23,11 @@ df.control = read.table("control_probs.txt", header=T, sep="\t") %>%
   mutate(occurrences = ifelse(is.na(occurrences), 0, occurrences), genP = fullP)
 df.control$obsP = df.control$occurrences / TOTAL_REARRANGEMENTS_AGING
 
-df.1 = df %>% select(obsP, genP, antigen.epitope, antigen.gene)
+df.1 = df %>% select(obsP, genP, antigen.epitope, antigen.species)
 df.1$dataset = "vdjdb"
 df.2 = df.control %>% select(obsP, genP)
-df.2$antigen.epitope = "NA"
-df.2$antigen.gene = "NA"
+df.2$antigen.epitope = "control"
+df.2$antigen.species = NA
 df.2$dataset = "control"
 df.3 = rbind(df.1, df.2) %>% filter(obsP>0 & genP>0)
 ```
@@ -38,25 +43,228 @@ ggplot(df.3, aes(x=obsP, y=genP, color=dataset)) +
   scale_y_log10() +
   scale_color_brewer(palette = "Set1") +
   theme_bw()
-
-ggplot(df.3, aes(x=obsP, y=genP, color=dataset)) +
-  geom_point(shape=21) +
-  geom_smooth(method="lm") +
-  geom_abline(linetype="dashed") +
-  scale_color_brewer(palette = "Set1") +
-  theme_bw()
 ```
 
 Selection effect
 
 ```{r}
-ggplot(df.3, aes(x=log10(genP), color = dataset)) +
+ggplot(df.3, aes(x=genP, color = dataset)) +
   stat_ecdf() +
   scale_color_brewer(palette = "Set1") +
+  scale_x_log10() +
   theme_bw()
 
-ggplot(df.3, aes(x=log10(obsP/genP), color = dataset)) +
+ggplot(df.3, aes(x=obsP, color = dataset)) +
   stat_ecdf() +
   scale_color_brewer(palette = "Set1") +
+  scale_x_log10() +
+  theme_bw()
+
+ggplot(df.3, aes(x=obsP/genP, color = dataset)) +
+  stat_ecdf() +
+  scale_color_brewer(palette = "Set1") +
+  scale_x_log10() +
   theme_bw()
 ```
+
+## Generation probabilities, observed frequency and selection odds
+
+Taking epitopes with sufficient number of TCRs
+
+```{r}
+df.3.s = df.3 %>%
+  group_by(antigen.epitope) %>%
+  dplyr::summarise(count = n(), 
+                   medGenP = median(genP),
+                   medObsP = median(obsP),
+                   medOdds = median(obsP / genP)) %>%
+  arrange(-count)
+
+head(df.3.s, 20)
+
+good_epitope = (df.3.s %>% filter(count > 20))$antigen.epitope
+```
+
+```{r}
+df.4 = df.3 %>% filter(antigen.epitope %in% good_epitope)
+
+df.4$antigen.epitope = with(df.3.s, 
+                            factor(df.4$antigen.epitope, levels = as.character(antigen.epitope)[order(medGenP)]))
+
+ggplot(df.4, 
+       aes(x=antigen.epitope, y=genP, fill=antigen.species, color=antigen.species)) +
+  geom_violin(trim=F) +
+  geom_boxplot(color="black", width=0.2, fill="white", outlier.shape = NA) +
+  coord_flip() +
+  xlab("") +
+  scale_y_log10("Rearrangement probability", 
+                breaks=c(1e-11,1e-10,1e-9,1e-8,1e-7,1e-6,1e-5), limits=c(1e-11, 1e-5)) +
+  scale_fill_discrete("Species") +
+  scale_color_discrete("Species") +
+  theme_bw()
+
+a1 = aov(log10(genP) ~ antigen.epitope, df.4 %>% filter(antigen.epitope != "control"))
+an1 = anova(a1)
+print(an1[1,2]/sum(an1[,2]))
+summary(a1)
+
+ggplot(df.4, 
+       aes(x=antigen.species, y=genP, fill=antigen.species, color=antigen.species)) +
+  geom_violin(trim=F) +
+  geom_boxplot(color="black", width=0.2, fill="white", outlier.shape = NA) +
+  coord_flip() +
+  xlab("") +
+  scale_y_log10("Rearrangement probability", 
+                breaks=c(1e-11,1e-10,1e-9,1e-8,1e-7,1e-6,1e-5), limits=c(1e-11, 1e-5)) +
+  scale_fill_discrete("Species") +
+  scale_color_discrete("Species") +
+  theme_bw()
+
+a2 = aov(log10(genP) ~ antigen.species, df.4)
+an2 = anova(a2)
+print(an2[1,2]/sum(an2[,2]))
+summary(a2)
+TukeyHSD(a2, "antigen.species")
+```
+
+```{r}
+df.5 = df.3 %>% filter(antigen.epitope %in% good_epitope)
+
+df.5$antigen.epitope = with(df.3.s, 
+                            factor(df.5$antigen.epitope, levels = as.character(antigen.epitope)[order(medObsP)]))
+
+ggplot(df.5, 
+       aes(x=antigen.epitope, y=obsP, fill=antigen.species, color=antigen.species)) +
+  geom_violin(trim=T) +
+  geom_boxplot(color="black", width=0.2, fill="white", outlier.shape = NA) +
+  coord_flip() +
+  xlab("") +
+  scale_y_log10("Observed rate") +
+  scale_fill_discrete("Species") +
+  scale_color_discrete("Species") +
+  theme_bw()
+
+a1 = aov(log10(obsP) ~ antigen.epitope, df.5 %>% filter(antigen.epitope != "control"))
+an1 = anova(a1)
+print(an1[1,2]/sum(an1[,2]))
+summary(a1)
+
+ggplot(df.5, 
+       aes(x=antigen.species, y=obsP, fill=antigen.species, color=antigen.species)) +
+  geom_violin(trim=F) +
+  geom_boxplot(color="black", width=0.2, fill="white", outlier.shape = NA) +
+  coord_flip() +
+  xlab("") +
+  scale_y_log10("Observed rate") +
+  scale_fill_discrete("Species") +
+  scale_color_discrete("Species") +
+  theme_bw()
+
+a2 = aov(log10(obsP) ~ antigen.species, df.5)
+an2 = anova(a2)
+print(an2[1,2]/sum(an2[,2]))
+summary(a2)
+TukeyHSD(a2, "antigen.species")
+```
+
+```{r}
+df.6 = df.3 %>% filter(antigen.epitope %in% good_epitope)
+
+df.6$antigen.epitope = with(df.3.s, 
+                            factor(df.6$antigen.epitope, levels = as.character(antigen.epitope)[order(medOdds)]))
+
+ggplot(df.6, 
+       aes(x=antigen.epitope, y=obsP/genP, fill=antigen.species, color=antigen.species)) +
+  geom_violin(trim=F) +
+  geom_boxplot(color="black", width=0.2, fill="white", outlier.shape = NA) +
+  coord_flip() +
+  xlab("") +
+  scale_y_log10("Odds observed to rearrangement probability") +
+  scale_fill_discrete("Species") +
+  scale_color_discrete("Species") +
+  theme_bw()
+
+a1 = aov(log10(obsP/genP) ~ antigen.epitope, df.6 %>% filter(antigen.epitope != "control"))
+an1 = anova(a1)
+print(an1[1,2]/sum(an1[,2]))
+summary(a1)
+
+ggplot(df.6, 
+       aes(x=antigen.species, y=obsP/genP, fill=antigen.species, color=antigen.species)) +
+  geom_violin(trim=F) +
+  geom_boxplot(color="black", width=0.2, fill="white", outlier.shape = NA) +
+  coord_flip() +
+  xlab("") +
+  scale_y_log10("Odds observed to rearrangement probability") +
+  scale_fill_discrete("Species") +
+  scale_color_discrete("Species") +
+  theme_bw()
+
+a2 = aov(log10(obsP/genP) ~ antigen.species, df.6)
+an2 = anova(a2)
+print(an2[1,2]/sum(an2[,2]))
+summary(a2)
+TukeyHSD(a2, "antigen.species")
+```
+
+## Correlation of repertoire statistics and epitope characteristics
+
+Must see: http://www.bloodjournal.org/content/bloodjournal/121/7/1112.full.pdf
+
+```{r}
+df.epi = df %>%
+  filter(obsP > 0 & genP > 0) %>%
+  mutate(epitope_len = nchar(as.character(antigen.epitope)))
+
+df.epi.s = df.epi %>%
+  group_by(epitope_len, mhc.class) %>%
+  dplyr::summarise(count = n())
+
+good_epi = (df.epi.s %>% filter(count > 20))
+
+ggplot(merge(df.epi, good_epi), 
+       aes(x=as.factor(epitope_len), group=epitope_len, y=genP)) +
+  geom_violin(trim=F) +
+  geom_boxplot(color="black", width=0.2, fill="white", outlier.shape = NA) +
+  xlab("") +
+  scale_y_log10("") +
+  theme_bw() +
+  facet_grid(.~mhc.class, scales = "free_x", space = "free")
+
+a1 = lm(log10(genP) ~ epitope_len, subset(merge(df.epi, good_epi), mhc.class == "MHCI"))
+summary(a1)
+
+a1 = lm(log10(genP) ~ epitope_len, subset(merge(df.epi, good_epi), mhc.class == "MHCII"))
+summary(a1)
+
+ggplot(merge(df.epi, good_epi), 
+       aes(x=as.factor(epitope_len), group=epitope_len, y=obsP)) +
+  geom_violin(trim=F) +
+  geom_boxplot(color="black", width=0.2, fill="white", outlier.shape = NA) +
+  xlab("") +
+  scale_y_log10("") +
+  theme_bw() +
+  facet_grid(.~mhc.class, scales = "free_x", space = "free")
+
+a1 = lm(log10(obsP) ~ epitope_len, subset(merge(df.epi, good_epi), mhc.class == "MHCI"))
+summary(a1)
+
+a1 = lm(log10(obsP) ~ epitope_len, subset(merge(df.epi, good_epi), mhc.class == "MHCII"))
+summary(a1)
+
+ggplot(merge(df.epi, good_epi), 
+       aes(x=as.factor(epitope_len), group=epitope_len, y=obsP/genP)) +
+  geom_violin(trim=F) +
+  geom_boxplot(color="black", width=0.2, fill="white", outlier.shape = NA) +
+  xlab("") +
+  scale_y_log10("") +
+  theme_bw() +
+  facet_grid(.~mhc.class, scales = "free_x", space = "free")
+
+a1 = lm(log10(obsP/genP) ~ epitope_len, subset(merge(df.epi, good_epi), mhc.class == "MHCI"))
+summary(a1)
+
+a1 = lm(log10(obsP/genP) ~ epitope_len, subset(merge(df.epi, good_epi), mhc.class == "MHCII"))
+summary(a1)
+```
+

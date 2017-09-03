@@ -1,0 +1,86 @@
+---
+title: "HLA"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+load_data_0 = function(file_name, sample, total) {
+  .df = read.table(file_name, header = T, sep = "\t") %>%
+    dplyr::select(cdr3, occurrences) %>% unique
+  .df$sample = sample
+  .df$total = total
+  .df
+}
+
+df.annot = data.frame()
+df.annot = rbind(df.annot, load_data_0("annotations/b27_neg_annot_0.txt", "b27_neg", 3102820))
+df.annot = rbind(df.annot, load_data_0("annotations/b27_pos_annot_0.txt", "b27_pos", 971661))
+df.annot = rbind(df.annot, load_data_0("annotations/b27_pos_all_annot_0.txt", "b27_pos_all", 5371924))
+df.annot = rbind(df.annot, load_data_0("annotations/aging_annot_0.txt", "aging", 29989055))
+df.annot = rbind(df.annot, load_data_0("annotations/ucb_annot_0.txt", "ucb", 4666498))
+
+summary(df.annot)
+```
+
+```{r}
+df.prob = read.table("VDJDB_fullP.txt", header = T, sep = "\t") %>%
+  filter(species == "HomoSapiens", mhc.class == "MHCI", gene == "TRB")
+
+df.prob$v = str_split_fixed(df.prob$v.segm, fixed("*"), 10)[,1]
+df.prob$j = str_split_fixed(df.prob$j.segm, fixed("*"), 10)[,1]
+df.prob$hla = str_split_fixed(df.prob$mhc.a, fixed(":"), 10)[,1]
+
+df.prob = df.prob %>%
+  dplyr::select(cdr3, hla, antigen.epitope, antigen.species, genP) %>%
+  unique
+
+df.epi.cdr3count = df.prob %>%
+  group_by(antigen.epitope) %>%
+  dplyr::summarise(count = n()) %>%
+  arrange(-count)
+
+df.cdr3count = df.prob %>%
+  group_by(cdr3) %>%
+  dplyr::summarise(count = n()) %>%
+  arrange(-count)
+
+good_cdr3 = (df.cdr3count %>%
+  filter(count == 1))$cdr3
+good_epi = (df.epi.cdr3count %>%
+  filter(count > 100))$antigen.epitope
+
+df.prob = df.prob %>% filter(antigen.epitope %in% good_epi, cdr3 %in% good_cdr3, genP > 0)
+
+summary(df.prob)
+```
+
+
+```{r}
+df.s = merge(df.annot, df.prob, all.y = T) %>%
+  mutate(occurrences = ifelse(is.na(occurrences), 0, occurrences), 
+         total = ifelse(is.na(total), 0, total)) %>%
+  group_by(sample, hla, antigen.epitope, antigen.species) %>%
+  dplyr::summarise(occurrences = mean(occurrences), 
+                   total = max(total),
+                   occurrences_exp = mean(genP) * max(total)) %>%
+  filter(!is.na(sample))
+```
+
+```{r}
+ggplot(df.s, aes(x = antigen.epitope, y = occurrences / total, fill = sample)) +
+  geom_bar(stat="identity", position = "dodge") +
+  facet_wrap(~hla, scales = "free_x")
+
+ggplot(df.s, aes(x = antigen.epitope, y = occurrences / total / occurrences_exp, fill = sample)) +
+  geom_bar(stat="identity", position = "dodge") +
+  facet_wrap(~hla, scales = "free_x")
+```
