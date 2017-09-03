@@ -1,0 +1,145 @@
+---
+title: "EDA"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(VGAM)
+require(vcd)
+require(MASS)
+
+select = dplyr::select
+```
+
+```{r}
+dt.vdjdb = fread("vdjdb_dump/vdjdb.slim.txt") %>%
+  filter(species == "HomoSapiens", gene == "TRB") %>%
+  select(cdr3, 
+         v.segm, j.segm,
+         antigen.epitope, antigen.species,
+         mhc.a, mhc.b, mhc.class)
+
+dt.hip.annot = fread('zcat annotations/hip_annot_1.txt.gz')
+dt.hip.stats = fread("annotations/hip_stats.txt")
+```
+
+Select good epitopes
+
+```{r}
+dt.vdjdb.epicount = dt.vdjdb %>%
+  group_by(antigen.epitope) %>%
+  summarise(total = n()) %>%
+  arrange(-total)
+
+print(dt.vdjdb.epicount)
+
+good_epi = (dt.vdjdb.epicount %>% filter(total >= 30))$antigen.epitope
+```
+
+Total number of rearrangements in HIP
+
+```{r}
+HIP_R = with(dt.hip.stats, sum(diversity - nc_diversity))
+```
+
+Get full DB incl. TCRs that were not detected
+
+```{r}
+dt.hip.annot.full = dt.hip.annot %>%
+  group_by(cdr3, 
+         v.segm, j.segm,
+         antigen.epitope, antigen.species,
+         mhc.a, mhc.b, mhc.class) %>%
+  summarise(incidence = sum(incidence), 
+            convergence = sum(convergence), 
+            occurrences = sum(occurrences)) %>%
+  merge(dt.vdjdb, all.y = T, by = c("cdr3", 
+         "v.segm", "j.segm",
+         "antigen.epitope", "antigen.species",
+         "mhc.a", "mhc.b", "mhc.class")) %>%
+  mutate(incidence = ifelse(is.na(incidence), 0, incidence), 
+         convergence = ifelse(is.na(convergence), 0, convergence), 
+         occurrences = ifelse(is.na(occurrences), 0, occurrences),
+         occur_freq = occurrences / HIP_R,
+         occur_freq_adj = (occurrences + 0.5) / HIP_R)
+```
+
+```{r}
+ggplot(dt.hip.annot.full, aes(x = nchar(cdr3), group = nchar(cdr3), y = occur_freq_adj)) +
+  geom_violin() +
+  scale_y_log10() +
+  scale_x_continuous(breaks = 5:25)
+```
+
+```{r}
+ggplot(dt.hip.annot.full %>%
+         filter(antigen.epitope %in% good_epi) %>%
+         group_by(antigen.epitope, antigen.species) %>%
+         summarise(frac_found = sum(occurrences > 0),
+                   occurrences_mean_tr = sum(occurrences) / sum(occurrences > 0))) +
+  geom_point(stat="identity", aes(x = frac_found, y = occurrences_mean_tr, color = antigen.species)) +
+  geom_vline(xintercept = 20) #+
+
+  #geom_label(aes(x = frac_found, y = occurrences_mean_tr, color = antigen.species, 
+  #               label = antigen.epitope), fill = NA)
+```
+
+
+```{r}
+ggplot(dt.hip.annot.full, aes(x=occurrences+1)) +
+  stat_ecdf()
+```
+
+```{r}
+pareto.MLE <- function(X)
+{
+   n <- length(X)
+   m <- min(X)
+   a <- n/sum(log(X)-log(m))
+   return( c(m,a) ) 
+}
+
+# example. 
+
+set.seed(42)
+res=pareto.MLE(dt.hip.annot.full$occur_freq_adj)
+
+dt.pareto.tmp = data.table(occur_freq_adj = (0.5:max(dt.hip.annot.full$occurrences)) / HIP_R)
+dt.pareto.tmp$CDF = with(dt.pareto.tmp, 1 - (res[1] / occur_freq_adj)^res[2])
+
+ggplot() +
+  stat_ecdf(data = dt.hip.annot.full, aes(x = occur_freq_adj)) +
+  geom_line(data = dt.pareto.tmp, aes(x = occur_freq_adj, y = CDF), color = "red") +
+  scale_x_log10()
+
+res2 = fitdistr(dt.hip.annot.full$occur_freq, "exponential")
+
+dt.exp.tmp = data.table(occur_freq = (0:max(dt.hip.annot.full$occurrences)) / HIP_R)
+dt.exp.tmp$CDF = with(dt.exp.tmp, 1 - exp(-occur_freq * res2[1]$estimate))
+
+ggplot() +
+  stat_ecdf(data = dt.hip.annot.full, aes(x = occur_freq)) +
+  geom_line(data = dt.exp.tmp, aes(x = occur_freq, y = CDF), color = "red") +
+  scale_x_log10()
+```
+
+```{r}
+ggplot(dt.hip.annot.full %>%
+         filter(antigen.epitope %in% good_epi), aes(x=antigen.epitope, 
+                                                    y=occur_freq_adj,
+                                                    fill=antigen.species)) +
+  geom_violin() + stat_summary(fun.y=median,
+                               geom="point", shape=21, fill = "white", color="black") +
+  scale_y_log10(breaks = 10^(-9:-4)) +
+  coord_flip() +
+  #scale_fill_discrete(guide = F) +
+  scale_fill_brewer(palette = "Set3") +
+  theme_bw()
+```
