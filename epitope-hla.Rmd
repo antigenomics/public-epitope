@@ -1,5 +1,5 @@
 ---
-title: "Untitled"
+title: "HLA"
 output:
   pdf_document: default
   html_document: default
