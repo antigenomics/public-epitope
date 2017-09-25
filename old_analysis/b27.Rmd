@@ -1,0 +1,54 @@
+---
+title: "B27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(data.table)
+library(dplyr)
+library(reshape2)
+```
+
+```{r}
+dt.b27 = rbind(fread("annotations/b27/b27.neg.pool.1mm.txt") %>% 
+                 mutate(b27 = "neg"),
+               fread("annotations/b27/b27.pos.pool.1mm.txt") %>% 
+                 mutate(b27 = "pos")) %>%
+  filter(mhc.class == "MHCI") %>%
+  mutate(hla = substr(mhc.a, 1, 8))
+  
+str(dt.b27)
+```
+
+```{r}
+dt.vdjdb.stats = fread("vdjdb_dump/vdjdb.slim.txt") %>%
+  filter(mhc.class == "MHCI", species == "HomoSapiens", gene == "TRB") %>%
+  mutate(hla = substr(mhc.a, 1, 8)) %>%
+  group_by(hla, antigen.epitope) %>%
+  summarise(unique_cdrs = n())
+
+good_hla_epi = dt.vdjdb.stats %>%
+  filter(unique_cdrs >= 50) %>%
+  select(hla, antigen.epitope, 
+         unique_cdrs)
+```
+
+```{r}
+dt.b27.s = dt.b27 %>%
+  group_by(antigen.epitope, hla, b27) %>%
+  summarise(occurrences = sum(occurrences), count = sum(count), freq = sum(freq)) %>%
+  group_by(b27) %>%
+  mutate(occurrences_total = sum(occurrences), count_total = sum(count), freq_total = sum(freq))
+```
+
+```{r}
+ggplot(dt.b27.s %>% merge(good_hla_epi), 
+       aes(x=antigen.epitope, 
+           y=occurrences / occurrences_total / unique_cdrs, fill = b27)) +
+  geom_bar(stat="identity", position="dodge") +
+  facet_wrap(~hla, scales = "free")
+```

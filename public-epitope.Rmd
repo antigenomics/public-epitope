@@ -1,0 +1,497 @@
+---
+title: "Rearrangement and selection of epitope-specific T-cell clonotypes"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(scales)
+```
+
+### Rearrangement model suppl
+
+Pre-processing and selecting epitopes
+
+```{r}
+dt.vdjdb = fread("rearr_model/VDJDB_fullP_rob_ageing.txt") 
+```
+
+Fraction of non-zero Prearr TCRs
+
+```{r}
+dt.epicount1 = dt.vdjdb %>%
+  group_by(antigen.epitope) %>%
+  summarise(total = n(), 
+            total_r_a = sum(genP_0mism_ageing > 0),
+            frac_r_a = sum(genP_0mism_ageing > 0) / n(),
+            log_mean_p_a = sum(ifelse(genP_0mism_ageing > 0, log10(genP_0mism_ageing), 0)) / sum(genP_0mism_ageing > 0),
+            total_r_h = sum(genP_0mism_rob > 0),
+            frac_r_h = sum(genP_0mism_rob > 0) / n(),
+            log_mean_p_h = sum(ifelse(genP_0mism_rob > 0, log10(genP_0mism_rob), 0)) / sum(genP_0mism_rob > 0))
+
+ggplot(dt.epicount1) +
+  geom_histogram(aes(pmin(30,total)), binwidth = 1, color= "black", fill=NA) +
+  geom_histogram(aes(pmin(30,total_r_a)), binwidth = 1, color = "red", fill=NA) +
+  geom_histogram(aes(pmin(30,total_r_h)), binwidth = 1, color = "blue", fill=NA) +
+  ylab("Number of epitopes") + xlab("Number of specific TCRs with non-zero Prearr") +
+  theme_bw()
+
+ggplot(dt.epicount1 %>% filter(total > 30)) +
+  geom_point(aes(x = frac_r_a, y = log_mean_p_a), color = "red") +
+  geom_smooth(aes(x = frac_r_a, y = log_mean_p_a), method = "lm", color = "red") +
+  geom_point(aes(x = frac_r_h, y = log_mean_p_h), color = "blue") +
+  geom_smooth(aes(x = frac_r_h, y = log_mean_p_h), method = "lm", color = "blue") +
+  ylab("Mean log Prearr for non-zero Prearr") + xlab("Fraction of non-zero Prearr") +
+  theme_bw()
+
+print(with(dt.epicount1 %>% filter(total > 30), cor.test(frac_r_a, log_mean_p_a)))
+print(with(dt.epicount1 %>% filter(total > 30), cor.test(frac_r_h, log_mean_p_h)))
+```
+
+Fraction of non-zero Prearr TCRs
+
+```{r}
+dt.epicount2 = dt.vdjdb %>%
+  group_by(antigen.epitope) %>%
+  summarise(total = n(), 
+            total_r_a = sum(genP_1mism_ageing > 0),
+            frac_r_a = sum(genP_1mism_ageing > 0) / n(),
+            log_mean_p_a = sum(ifelse(genP_1mism_ageing > 0, log10(genP_1mism_ageing), 0)) / sum(genP_1mism_ageing > 0),
+            total_r_h = sum(genP_1mism_rob > 0),
+            frac_r_h = sum(genP_1mism_rob > 0) / n(),
+            log_mean_p_h = sum(ifelse(genP_1mism_rob > 0, log10(genP_1mism_rob), 0)) / sum(genP_1mism_rob > 0))
+
+ggplot(dt.epicount2) +
+  geom_histogram(aes(pmin(30,total)), binwidth = 1, color= "black", fill=NA) +
+  geom_histogram(aes(pmin(30,total_r_a)), binwidth = 1, color = "red", fill=NA) +
+  geom_histogram(aes(pmin(30,total_r_h)), binwidth = 1, color = "blue", fill=NA) +
+  ylab("Number of epitopes") + xlab("Number of specific TCRs with non-zero Prearr/1mism") +
+  theme_bw() 
+
+ggplot(dt.epicount2 %>% filter(total > 30)) +
+  geom_point(aes(x = frac_r_a, y = log_mean_p_a), color = "red") +
+  geom_point(aes(x = frac_r_h, y = log_mean_p_h), color = "blue") +
+  ylab("Mean log Prearr/1mism for non-zero Prearr/1mism") + xlab("Fraction of non-zero Prearr/1mism") +
+  theme_bw()
+
+print(with(dt.epicount2 %>% filter(total > 30), cor.test(frac_r_a, log_mean_p_a)))
+print(with(dt.epicount2 %>% filter(total > 30), cor.test(frac_r_h, log_mean_p_h)))
+```
+
+Correlation between rearrangement probs from two models, with and without mismatches
+
+```{r}
+ggplot(dt.vdjdb, aes(x=genP_0mism_ageing,y=genP_1mism_ageing)) +
+  geom_point(shape=21) +
+  geom_smooth(method = "lm") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  scale_x_log10(limits=c(1e-13,1e-4)) +
+  scale_y_log10(limits=c(1e-13,1e-4)) +
+  theme_bw()
+
+ggplot(dt.vdjdb, aes(x=genP_0mism_rob,y=genP_1mism_rob)) +
+  geom_point(shape=21) +
+  geom_smooth(method = "lm") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  scale_x_log10(limits=c(1e-13,1e-4)) +
+  scale_y_log10(limits=c(1e-13,1e-4)) +
+  theme_bw()
+
+ggplot(dt.vdjdb, aes(x=genP_0mism_ageing,y=genP_0mism_rob)) +
+  geom_point(shape=21) +
+  geom_smooth(method = "lm") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  scale_x_log10(limits=c(1e-13,1e-4)) +
+  scale_y_log10(limits=c(1e-13,1e-4)) +
+  theme_bw()
+
+ggplot(dt.vdjdb, aes(x=genP_1mism_ageing,y=genP_1mism_rob)) +
+  geom_point(shape=21) +
+  geom_smooth(method = "lm") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  scale_x_log10(limits=c(1e-13,1e-4)) +
+  scale_y_log10(limits=c(1e-13,1e-4)) +
+  theme_bw()
+```
+
+### Annotated data suppl
+
+```{r}
+df.hip.raw = fread("zcat annotations/hip_annot_1.txt.gz")
+
+HIP_R = sum(fread("annotations/hip_stats.txt")$diversity)
+HIP_S = sum(nrow(fread("annotations/hip_stats.txt")))
+
+df.hip = df.hip.raw %>%
+  group_by(cdr3, antigen.epitope, antigen.species, mhc.a, mhc.b, mhc.class) %>%
+  summarise(count = sum(occurrences), 
+            freq = sum(occurrences) / HIP_R,
+            incidence = sum(incidence) / HIP_S / n(),
+            convergence = sum(convergence) / sum(occurrences)) %>%
+  merge(dt.vdjdb %>% select(cdr3, antigen.epitope, antigen.species, mhc.a, mhc.b, mhc.class, 
+                            genP_1mism_rob),
+        by = c("cdr3", "antigen.epitope", 'antigen.species', "mhc.a", 'mhc.b', 'mhc.class'), all.y = T) %>%
+  mutate(count = ifelse(is.na(count), 0, count),
+         freq = ifelse(is.na(freq), 0, freq),
+         incidence = ifelse(is.na(incidence), 0, incidence),
+         convergence = ifelse(is.na(convergence), 0, convergence))
+```
+
+```{r}
+ggplot(df.hip, aes(x=genP_1mism_rob*3,y=freq)) +
+  geom_point(shape=21) +
+  geom_smooth(method = "lm") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  scale_x_log10(limits=c(1e-13,1e-3)) +
+  scale_y_log10(limits=c(1e-13,1e-3)) +
+  scale_color_discrete(guide=F) +
+  theme_bw()
+```
+
+```{r}
+ggplot(df.hip, aes(x=genP_1mism_rob*3,y=incidence)) +
+  geom_point(shape=21) +
+  geom_smooth(method = "lm") +
+  scale_x_log10() +
+  scale_y_log10() +
+  scale_color_discrete(guide=F) +
+  theme_bw()
+```
+
+```{r}
+ggplot(df.hip %>% filter(incidence > 0), aes(x=incidence, y=convergence)) +
+  geom_point(shape=21) +
+ # geom_smooth() +
+  geom_vline(xintercept = 0.05, color = "red", linetype = "dashed") +
+  scale_color_discrete(guide=F) +
+  theme_bw()
+
+ggplot(df.hip %>% filter(incidence > 0), aes(x=genP_1mism_rob, y=convergence)) +
+  geom_point(shape=21) +
+ # geom_smooth() +
+  geom_vline(xintercept = 1e-6, color = "red", linetype = "dashed") +
+  scale_color_discrete(guide=F) +
+  theme_bw()
+```
+
+```{r}
+dt.epicount3 = df.hip %>%
+  group_by(antigen.epitope) %>%
+  summarise(total = n(), 
+            found_frac = sum(count > 0) / total, 
+            found_p_frac = sum(genP_1mism_rob > 0) / total)
+
+ggplot(dt.epicount3, aes(x = total, y = found_frac)) +
+  geom_point(shape = 21, aes(color = total > 30 & found_frac > 0.75)) +
+  theme_bw()
+
+ggplot(dt.epicount3, aes(x = total, y = found_p_frac)) +
+  geom_point(shape = 21, aes(color = total > 30 & found_frac > 0.75)) +
+  theme_bw()
+
+good_epi = (dt.epicount3 %>% filter(total > 30 & found_frac > 0.75))$antigen.epitope
+
+df.hip.all = df.hip
+df.hip = df.hip %>% filter(antigen.epitope %in% good_epi, mhc.class == "MHCI")
+```
+
+## Exploratory analysis
+
+### By epitope
+
+```{r}
+df.hip.gp = df.hip %>%
+  filter(genP_1mism_rob > 0)
+df.hip.gp.s = df.hip.gp %>%
+  group_by(antigen.epitope) %>%
+  summarise(genP_med = median(genP_1mism_rob)) %>%
+  arrange(-genP_med)
+df.hip.gp$antigen.epitope = factor(df.hip.gp$antigen.epitope, 
+                                   levels = df.hip.gp.s$antigen.epitope)
+
+ggplot(df.hip.gp, aes(x=antigen.epitope, group = antigen.epitope, y=genP_1mism_rob, fill = antigen.species)) +
+  geom_violin() + stat_summary(fun.y=median, geom="point", shape=21, fill = "white", color="black") +
+  scale_y_log10(breaks = 10^(-15:-1),
+                label= function(x) {ifelse(x==0, "0", parse(text=gsub("[+]", "", gsub(".+e", "10^", scientific_format()(x)))))} ) +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set3") +
+  theme_bw()
+
+a = kruskal.test(freq ~ antigen.epitope, data = df.hip.gp)
+print(a)
+```
+
+```{r}
+df.hip.obs = df.hip %>%
+  filter(freq > 0)
+df.hip.obs.s = df.hip.obs %>%
+  group_by(antigen.epitope) %>%
+  summarise(freq_med = median(freq)) %>%
+  arrange(-freq_med)
+df.hip.obs$antigen.epitope = factor(df.hip.obs$antigen.epitope, 
+                                   levels = df.hip.obs.s$antigen.epitope)
+
+ggplot(df.hip.obs, aes(x=antigen.epitope, group = antigen.epitope, y=freq, fill = antigen.species)) +
+  geom_violin() + stat_summary(fun.y=median, geom="point", shape=21, fill = "white", color="black") +
+  scale_y_log10(breaks = 10^(-15:-1),
+                label= function(x) {ifelse(x==0, "0", parse(text=gsub("[+]", "", gsub(".+e", "10^", scientific_format()(x)))))} ) +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set3") +
+  theme_bw()
+
+a = kruskal.test(freq ~ antigen.epitope, data = df.hip.obs)
+print(a)
+```
+
+```{r}
+df.hip.odds = df.hip %>%
+  filter(freq > 0, genP_1mism_rob > 0) %>%
+  mutate(odds = freq/genP_1mism_rob,
+         log.odds = log(odds))
+df.hip.odds.s = df.hip.odds %>%
+  group_by(antigen.epitope) %>%
+  summarise(odds_med = median(odds)) %>%
+  arrange(-odds_med)
+df.hip.odds$antigen.epitope = factor(df.hip.odds$antigen.epitope, 
+                                   levels = df.hip.odds.s$antigen.epitope)
+
+ggplot(df.hip.odds, aes(x=antigen.epitope, group = antigen.epitope, y=odds/3, fill = antigen.species)) +
+  geom_violin() + stat_summary(fun.y=median, geom="point", shape=21, fill = "white", color="black") +
+  scale_y_log10(breaks = 2^(seq(-2,20,by=2))) +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set3") +
+  theme_bw()
+
+a = kruskal.test(odds ~ antigen.epitope, data = df.hip.odds)
+print(a)
+```
+
+### By species
+
+```{r}
+df.hip.gp = df.hip %>%
+  filter(genP_1mism_rob > 0)
+df.hip.gp.s = df.hip.gp %>%
+  group_by(antigen.species) %>%
+  summarise(genP_med = median(genP_1mism_rob)) %>%
+  arrange(-genP_med)
+df.hip.gp$antigen.species = factor(df.hip.gp$antigen.species, 
+                                   levels = df.hip.gp.s$antigen.species)
+
+ggplot(df.hip.gp, aes(x=antigen.species, group = antigen.species, y=genP_1mism_rob)) +
+  geom_violin() + stat_summary(fun.y=median, geom="point", shape=21, fill = "white", color="black") +
+  scale_y_log10(breaks = 10^(-15:-1),
+                label= function(x) {ifelse(x==0, "0", parse(text=gsub("[+]", "", gsub(".+e", "10^", scientific_format()(x)))))} ) +
+  coord_flip() +
+  theme_bw()
+
+kk = kruskal.test(freq ~ antigen.species, data = df.hip.gp)
+print(kk)
+
+aa = aov(log(genP_1mism_rob) ~ antigen.species, data = df.hip.gp)
+summary(aa)
+TukeyHSD(aa, "antigen.species")
+```
+
+```{r}
+df.hip.obs = df.hip %>%
+  filter(freq > 0)
+df.hip.obs.s = df.hip.obs %>%
+  group_by(antigen.species) %>%
+  summarise(freq_med = median(freq)) %>%
+  arrange(-freq_med)
+df.hip.obs$antigen.species = factor(df.hip.obs$antigen.species, 
+                                   levels = df.hip.obs.s$antigen.species)
+
+ggplot(df.hip.obs, aes(x=antigen.species, group = antigen.species, y=freq)) +
+  geom_violin() + stat_summary(fun.y=median, geom="point", shape=21, fill = "white", color="black") +
+  scale_y_log10(breaks = 10^(-15:-1),
+                label= function(x) {ifelse(x==0, "0", parse(text=gsub("[+]", "", gsub(".+e", "10^", scientific_format()(x)))))} ) +
+  coord_flip() +
+  theme_bw()
+
+kk = kruskal.test(freq ~ antigen.species, data = df.hip.obs)
+print(kk)
+
+aa = aov(log(freq) ~ antigen.species, data = df.hip.obs)
+summary(aa)
+TukeyHSD(aa, "antigen.species")
+```
+
+```{r}
+df.hip.odds = df.hip %>%
+  filter(freq > 0, genP_1mism_rob > 0) %>%
+  mutate(odds = freq/genP_1mism_rob,
+         log.odds = log(odds))
+df.hip.odds.s = df.hip.odds %>%
+  group_by(antigen.species) %>%
+  summarise(odds_med = median(odds)) %>%
+  arrange(-odds_med)
+df.hip.odds$antigen.species = factor(df.hip.odds$antigen.species, 
+                                   levels = df.hip.odds.s$antigen.species)
+
+ggplot(df.hip.odds, aes(x=antigen.species, group = antigen.species, y=odds/3)) +
+  geom_violin() + stat_summary(fun.y=median, geom="point", shape=21, fill = "white", color="black") +
+  scale_y_log10(breaks = 2^(seq(-2,20,by=2))) +
+  coord_flip() +
+  theme_bw()
+
+kk = kruskal.test(odds ~ antigen.species, data = df.hip.odds)
+print(kk)
+
+aa = aov(log(odds) ~ antigen.species, data = df.hip.odds)
+summary(aa)
+TukeyHSD(aa, "antigen.species")
+```
+
+### Number of publics
+
+```{r}
+df.hip.frac = df.hip %>%
+  group_by(antigen.epitope) %>%
+  summarise(publ_5 = sum(incidence > 0.05) / n(),
+            publ_10 = sum(incidence > 0.1) / n(),
+            publ_15 = sum(incidence > 0.15) / n(),
+            publ_20 = sum(incidence > 0.20) / n())
+
+df.hip.frac$antigen.epitope = with(df.hip.frac,
+                                   factor(antigen.epitope, levels = antigen.epitope[order(publ_5)]))
+
+df.hip.frac = df.hip.frac %>%
+  melt
+
+ggplot(df.hip.frac, aes(x=antigen.epitope, y = value, fill = variable)) +
+  geom_bar(stat="identity", color = "black", position = "identity") +
+  coord_flip() +
+  scale_fill_brewer(palette = "RdBu") +
+  theme_bw()
+```
+
+```{r}
+df.hip.frac = df.hip %>%
+  group_by(antigen.species) %>%
+  summarise(publ_5 = sum(incidence > 0.05) / n(),
+            publ_10 = sum(incidence > 0.1) / n(),
+            publ_15 = sum(incidence > 0.15) / n(),
+            publ_20 = sum(incidence > 0.20) / n())
+
+df.hip.frac$antigen.species = with(df.hip.frac,
+                                   factor(antigen.species, levels = antigen.species[order(publ_5)]))
+
+df.hip.frac = df.hip.frac %>%
+  melt
+
+ggplot(df.hip.frac, aes(x=antigen.species, y = value, fill = variable)) +
+  geom_bar(stat="identity", color = "black", position = "identity") +
+  coord_flip() +
+  scale_fill_brewer(palette = "RdBu") +
+  theme_bw()
+```
+
+## Epitope properties and rearrangement prob/selection
+
+```{r}
+df.hip.all.1 = df.hip.all %>% filter(mhc.class == "MHCI", nchar(antigen.epitope) %in% c(8:11))
+```
+
+```{r}
+library(Hmisc)
+dt.epi.prop = rbindlist(lapply(strsplit(unique(df.hip.all.1$antigen.epitope), split = ""),
+                             function(x) data.table(aa = x,
+                                                    antigen.epitope = paste0(x, collapse = "")))) 
+
+dt.epi.prop = rbind(dt.epi.prop %>% merge(fread("kidera.txt") %>% mutate(len = 1) %>% melt, by = "aa", allow.cartesian = T),
+                    dt.epi.prop %>% merge(fread("martin-lavery.txt") %>% melt, by = "aa", allow.cartesian = T)) %>%
+  group_by(antigen.epitope, variable) %>%
+  summarise(value = sum(value)) %>%
+  group_by(variable) %>%
+  mutate(value_c = as.factor(ifelse(variable == "len", as.integer(as.factor(value)), as.integer(cut2(value, g=4)))))
+```
+
+```{r}
+ggplot(dt.epi.prop, aes(x = antigen.epitope, y = value, color = value_c)) +
+  geom_point() +
+  facet_wrap(~variable, scales = "free") +
+  scale_color_brewer("Factor level", palette = "RdBu") +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+```
+
+```{r}
+dt.hip.prop = dt.epi.prop %>% merge(df.hip.all.1, by = "antigen.epitope", allow.cartesian = T)
+```
+
+```{r}
+ggplot(dt.hip.prop, aes(x = value_c, group = value_c, y = genP_1mism_rob, fill = value_c)) +
+  geom_violin() +
+  stat_summary(fun.y=median, geom="point", shape=21, fill = "white", color="black") +
+  scale_y_log10() +
+  scale_fill_brewer(guide = F, palette = "RdBu") +
+  facet_wrap(~variable) +
+  theme_bw()
+
+ggplot(dt.hip.prop, aes(x = value_c, group = value_c, y = freq, fill = value_c)) +
+  geom_violin() +
+  stat_summary(fun.y=median, geom="point", shape=21, fill = "white", color="black") +
+  scale_y_log10() +
+  scale_fill_brewer(guide = F, palette = "RdBu") +
+  facet_wrap(~variable) +
+  theme_bw()
+```
+
+```{r}
+dt.hip.prop.cor = dt.hip.prop %>%
+  group_by(variable) %>%
+  summarise(r_freq = cor.test(freq, value, method = "spearman")$estimate,
+            p_freq = cor.test(freq, value, method = "spearman")$p.value,
+            r_P = cor.test(genP_1mism_rob, value, method = "spearman")$estimate,
+            p_P = cor.test(genP_1mism_rob, value, method = "spearman")$p.value)
+```
+
+```{r}
+dt.hip.prop.aov1 = dt.hip.prop %>%
+  filter(freq > 0) %>%
+  group_by(variable) %>%
+  summarise(F_freq = summary(aov(log(freq1)~value_c1, data.table(freq1 = freq, value_c1 = as.integer(value_c))))[[1]][["F value"]][1],
+            p_freq = summary(aov(log(freq1)~value_c1, data.table(freq1 = freq, value_c1 = as.integer(value_c))))[[1]][["Pr(>F)"]][1]) %>%
+  mutate(p_freq_adj = p.adjust(p_freq))
+
+dt.hip.prop.aov2 = dt.hip.prop %>%
+  filter(genP_1mism_rob > 0) %>%
+  group_by(variable) %>%
+  summarise(F_P = summary(aov(log(P1)~value_c1, data.table(P1 = genP_1mism_rob, value_c1 = as.integer(value_c))))[[1]][["F value"]][1],
+            p_P = summary(aov(log(P1)~value_c1, data.table(P1 = genP_1mism_rob, value_c1 = as.integer(value_c))))[[1]][["Pr(>F)"]][1]) %>%
+  mutate(p_P_adj = p.adjust(p_P))
+```
+
+```{r}
+dt.hip.prop.cor1 = dt.hip.prop %>%
+  filter(freq > 0) %>%
+  group_by(variable) %>%
+  summarise(r_freq = cor.test(freq, value, method = "spearman")$estimate,
+            p_freq = cor.test(freq, value, method = "spearman")$p.value) %>%
+  mutate(p_freq_adj = p.adjust(p_freq))
+
+dt.hip.prop.cor2 = dt.hip.prop %>%
+  filter(genP_1mism_rob > 0) %>%
+  group_by(variable) %>%
+  summarise(r_P = cor.test(genP_1mism_rob, value, method = "spearman")$estimate,
+            p_P = cor.test(genP_1mism_rob, value, method = "spearman")$p.value) %>%
+  mutate(p_P_adj = p.adjust(p_P))
+```
+
+
+
+
+
+
+

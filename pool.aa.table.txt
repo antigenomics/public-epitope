@@ -1,1 +1,0 @@
-/home/mikesh/datasets/aging/func/pool/pool.aa.table.txt

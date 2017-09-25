@@ -1,0 +1,91 @@
+---
+title: "diversity"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+dt.vdjdb = fread("vdjdb_dump/vdjdb.slim.txt") %>%
+  filter(species == "HomoSapiens", gene == "TRB") %>%
+  select(cdr3, 
+         v.segm, j.segm,
+         antigen.epitope, antigen.species,
+         mhc.a, mhc.b, mhc.class)
+
+#dt.hip.annot = fread('zcat annotations/hip_annot_1.txt.gz')
+dt.hip.annot = fread('annotations/hip_annot_0.txt')
+dt.hip.stats = fread("annotations/hip_stats.txt")
+```
+
+Select good epitopes
+
+```{r}
+dt.vdjdb.epicount = dt.vdjdb %>%
+  group_by(antigen.epitope) %>%
+  summarise(total = n()) %>%
+  arrange(-total)
+
+print(dt.vdjdb.epicount)
+
+good_epi = (dt.vdjdb.epicount %>% filter(total >= 30))$antigen.epitope
+```
+
+Total number of rearrangements in HIP
+
+```{r}
+HIP_R = with(dt.hip.stats, sum(diversity - nc_diversity))
+```
+
+Get full DB incl. TCRs that were not detected
+
+```{r}
+dt.hip.annot.full = dt.hip.annot %>%
+  group_by(cdr3, 
+         v.segm, j.segm,
+         antigen.epitope, antigen.species,
+         mhc.a, mhc.b, mhc.class) %>%
+  summarise(incidence = sum(incidence), 
+            convergence = sum(convergence), 
+            occurrences = sum(occurrences)) %>%
+  merge(dt.vdjdb, all.y = T, by = c("cdr3", 
+         "v.segm", "j.segm",
+         "antigen.epitope", "antigen.species",
+         "mhc.a", "mhc.b", "mhc.class")) %>%
+  mutate(incidence = ifelse(is.na(incidence), 0, incidence), 
+         convergence = ifelse(is.na(convergence), 0, convergence), 
+         occurrences = ifelse(is.na(occurrences), 0, occurrences),
+         occurrences_adj = occurrences + 1,
+         occur_freq = occurrences / HIP_R,
+         occur_freq_adj = (occurrences + 1) / HIP_R)
+```
+
+
+```{r}
+dt.hip.annot.divindex = dt.hip.annot.full %>%
+  filter(antigen.epitope %in% good_epi) %>%
+  mutate(hla = substr(mhc.a, 1, 8)) %>%
+  group_by(antigen.epitope, antigen.species,
+         hla, mhc.class) %>%
+  summarise(total = n(), 
+            chao = sum(occurrences_adj == 1) * (sum(occurrences_adj == 1) - 1) / 2 / (sum(occurrences_adj == 2) + 1),
+            shannon = -sum(occur_freq_adj * log(occur_freq_adj)),
+            shannon2 = -sum(ifelse(occur_freq == 0, 0, occur_freq / sum(occur_freq) * log(occur_freq / sum(occur_freq)))) / log(total),
+            epi.len = nchar(antigen.epitope[1]))
+```
+
+
+```{r}
+ggplot(dt.hip.annot.divindex %>% filter(mhc.class == "MHCI"), 
+       aes(x = total, y = shannon2, fill = as.factor(hla))) +
+  geom_point(shape = 21) +
+  scale_fill_brewer(palette = "RdBu")
+```
