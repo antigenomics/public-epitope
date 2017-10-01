@@ -1,0 +1,123 @@
+---
+title: "UCB"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(scales)
+library(parallel)
+library(stringr)
+library(knitr)
+```
+
+```{r}
+dt.aging.stats = fread("annotations/aging_stats.txt") %>%
+  filter(age > 0, !is.na(sex)) %>%
+  mutate(count_total = count, occurrences_total = diversity) %>%
+  select(sample_id, sex, count_total, occurrences_total)
+```
+
+Load VDJdb annotations with 1 mismatch for aging data
+
+```{r}
+dt.aging = rbindlist(mclapply(as.list(dt.aging.stats$sample_id),
+                   function(x) fread(paste0("annotations/aging_split_1mm/", x, ".annot.txt")) %>% 
+                     mutate(sample_id = x), mc.cores = 40)) %>%
+  group_by(sample_id, cdr3) %>%
+  summarise(count = sum(count), occurrences = n())
+```
+
+VDJdb data
+
+```{r}
+dt.vdjdb = fread("rearr_model/VDJDB_fullP_rob_ageing.txt") %>% 
+  filter(gene == "TRB", mhc.class == "MHCI") %>%
+  mutate(hla_spec = str_split_fixed(mhc.a, pattern = "[:,]", 2)[,1]) %>%
+  select(cdr3, hla_spec, antigen.epitope, antigen.species) %>%
+  group_by(antigen.epitope) %>%
+  mutate(unique_cdrs = n()) %>%
+  filter(unique_cdrs > 30) %>%
+  select(cdr3, hla_spec, antigen.epitope, antigen.species, unique_cdrs)
+```
+
+Merge datasets
+
+```{r}
+dt.aging.m = dt.aging %>%
+  merge(dt.vdjdb) %>%
+  merge(dt.aging.stats)
+```
+
+Summarise by epitope
+
+```{r}
+dt.aging.s = dt.aging.m %>%
+  group_by(sex, antigen.epitope, antigen.species, unique_cdrs) %>%
+  summarise(occurrences = sum(occurrences) / unique_cdrs[1]) %>%
+  merge(dt.aging.stats %>%
+          group_by(sex) %>%
+          summarise(occurrences_total = sum(as.numeric(occurrences_total))))
+```
+
+## Evenness of epitope-specific TCR occurrences
+
+```{r}
+dt.aging.s2 = as.data.table(dt.aging.m) %>%
+  group_by(sample_id, sex, antigen.epitope, antigen.species, unique_cdrs) %>%
+  summarise(occurrences = sum(occurrences)) %>%
+  group_by(sample_id) %>%
+  mutate(occurrences_share = occurrences / sum(occurrences) / unique_cdrs)
+```
+
+```{r}
+dt.p = data.table(antigen.epitope = unique(dt.aging.s2$antigen.epitope), p = 1, freq.ratio = 1) %>%
+  merge(dt.aging.s2 %>% ungroup %>% select(antigen.species, antigen.epitope) %>% unique)
+
+for (i in 1:nrow(dt.p)) {
+  tmp = dt.aging.s2 %>% filter(antigen.epitope == dt.p$antigen.epitope[i])
+  dt.p$freq.ratio[i] = with(tmp, mean(occurrences_share[which(sex == "M")]) / mean(occurrences_share[which(sex == "F")]))
+  dt.p$p[i] = t.test(occurrences_share ~ sex, tmp)$p.value
+}
+
+dt.p$p = p.adjust(dt.p$p, method = "BH")
+dt.p$len = nchar(as.character(dt.p$antigen.epitope))
+
+kable(dt.p %>% arrange(p))
+
+good_epi = (dt.p %>% filter(p < 0.05))$antigen.epitope
+dt.aging.s2 = dt.aging.s2 %>%
+  mutate(antigen.epitope = ifelse(antigen.epitope %in% good_epi, paste(antigen.epitope, "(*)"),antigen.epitope))
+```
+
+```{r}
+dt.aging.s2.s = dt.aging.s2 %>%
+  group_by(antigen.epitope) %>%
+  summarise(freq = mean(occurrences_share[which(sex == "M")]))
+
+dt.aging.s2$antigen.epitope = factor(dt.aging.s2$antigen.epitope, 
+                                    levels = dt.aging.s2.s$antigen.epitope[order(dt.aging.s2.s$freq)])
+
+dt.aging.s2$epi.len = nchar(as.character(dt.aging.s2$antigen.epitope))
+
+ggplot(dt.aging.s2, aes(x = antigen.epitope, group = paste(antigen.epitope,sex), 
+                        fill = sex,
+                       y = occurrences_share)) +
+  geom_boxplot() +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set1") +
+  xlab("") + scale_y_continuous("Share of annotated rearrangements", 
+                                expand = c(0,0)) +
+  theme_bw()  +
+  theme(aspect = 1.1,  
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+```

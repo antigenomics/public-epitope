@@ -17,6 +17,7 @@ library(reshape2)
 library(scales)
 library(parallel)
 library(stringr)
+library(knitr)
 ```
 
 Load metadata
@@ -42,13 +43,13 @@ VDJdb data
 
 ```{r}
 dt.vdjdb = fread("rearr_model/VDJDB_fullP_rob_ageing.txt") %>% 
-  filter(gene == "TRB") %>%
+  filter(gene == "TRB", mhc.class == "MHCI") %>%
   mutate(hla_spec = str_split_fixed(mhc.a, pattern = "[:,]", 2)[,1]) %>%
   select(cdr3, hla_spec, antigen.epitope, antigen.species) %>%
   group_by(antigen.epitope) %>%
   mutate(unique_cdrs = n()) %>%
   filter(unique_cdrs > 30) %>%
-  select(cdr3, hla_spec, antigen.epitope, antigen.species)
+  select(cdr3, antigen.epitope, antigen.species, unique_cdrs)
 ```
 
 Merge
@@ -62,51 +63,51 @@ dt.hip.m = dt.hip %>%
 Summarise by sex
 
 ```{r}
-dt.hip.s = dt.hip.m %>%
-  group_by(sex, hla_spec, antigen.epitope, antigen.species) %>%
-  summarise(occurrences = sum(occurrences), occurrences_total = sum(as.numeric(occurrences_total)))
+dt.hip.s = as.data.table(dt.hip.m) %>%
+  group_by(sample_id, sex, antigen.epitope, antigen.species, unique_cdrs) %>%
+  summarise(occurrences = sum(occurrences)) %>%
+  group_by(sample_id) %>%
+  mutate(occurrences_share = occurrences / sum(occurrences) / unique_cdrs)
 ```
 
-Plot
+```{r}
+dt.p = data.table(antigen.epitope = unique(dt.hip.s$antigen.epitope), p = 1, freq.ratio = 1) %>%
+  merge(dt.hip.s %>% ungroup %>% select(antigen.species, antigen.epitope) %>% unique)
+
+for (i in 1:nrow(dt.p)) {
+  tmp = dt.hip.s %>% filter(antigen.epitope == dt.p$antigen.epitope[i])
+  dt.p$freq.ratio[i] = with(tmp, mean(occurrences_share[which(sex=="male")]) / mean(occurrences_share[which(sex=="female")]))
+  dt.p$p[i] = t.test(occurrences_share ~ sex, tmp)$p.value
+}
+
+dt.p$p = p.adjust(dt.p$p, method = "BH")
+dt.p$len = nchar(as.character(dt.p$antigen.epitope))
+
+kable(dt.p %>% arrange(p))
+
+good_epi = (dt.p %>% filter(p < 0.05))$antigen.epitope
+dt.hip.s = dt.hip.s %>%
+  mutate(antigen.epitope = ifelse(antigen.epitope %in% good_epi, paste(antigen.epitope, "(*)"),antigen.epitope))
+```
 
 ```{r}
 dt.hip.s.s = dt.hip.s %>%
-  filter(sex == "male") %>%
+  #filter(ucb == T) %>%
   group_by(antigen.epitope) %>%
-  summarise(freq = sum(occurrences) / sum(occurrences_total))
+  summarise(freq = mean(occurrences_share[which(sex == "male")]))
 
 dt.hip.s$antigen.epitope = factor(dt.hip.s$antigen.epitope, 
                                     levels = dt.hip.s.s$antigen.epitope[order(dt.hip.s.s$freq)])
 
-tmp = dt.hip.s %>%
-  group_by(sex, antigen.epitope) %>%
-  summarise(freq = sum(occurrences) / sum(occurrences_total)) %>%
-  dcast(antigen.epitope~sex, value.var= "freq")
-freq.ratios = tmp[,3] / tmp[,2]
-m=mean(freq.ratios)
-ci = qnorm(0.975)*sd(freq.ratios)/sqrt(length(freq.ratios))
-paste(round(m,2), round(m-ci,2), round(m+ci,2))
-
-wilcox.test(occurrences / occurrences_total ~ sex, dt.hip.s, paired=T)
-
-ggplot(dt.hip.s, aes(x = antigen.epitope, fill = sex, y = occurrences / occurrences_total)) +
-  geom_bar(stat="identity", position = "dodge") +
+ggplot(dt.hip.s, aes(x = antigen.epitope, group = paste(antigen.epitope,sex), 
+                        fill = sex,
+                       y = occurrences_share)) +
+  geom_boxplot(color = "black") +
   coord_flip() +
   scale_fill_brewer(palette = "Set1") +
-  xlab("") + ylab("Fraction of rearrangements") +
-  theme_bw()
-
-ggplot(dt.hip.s, aes(x = antigen.species, fill = sex, y = occurrences / occurrences_total)) +
-  geom_boxplot(aes(group = paste(antigen.species, sex))) +
-  coord_flip() +
-  scale_fill_brewer(palette = "Set1") +
-  xlab("") + ylab("Fraction of rearrangements") +
-  theme_bw()
-
-ggplot(dt.hip.s, aes(x = hla_spec, fill = sex, y = occurrences / occurrences_total)) +
-  geom_boxplot(aes(group = paste(hla_spec, sex))) +
-  coord_flip() +
-  scale_fill_brewer(palette = "Set1") +
-  xlab("") + ylab("Fraction of rearrangements") +
-  theme_bw()
+  xlab("") + scale_y_continuous("Share of annotated rearrangements", 
+                                expand = c(0,0)) +
+  theme_bw()  +
+  theme(aspect = 1.1,  
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 ```

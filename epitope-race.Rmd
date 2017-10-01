@@ -1,6 +1,8 @@
 ---
 title: "Race"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -15,15 +17,27 @@ library(reshape2)
 library(scales)
 library(parallel)
 library(stringr)
+library(knitr)
 ```
 
 Load metadata
 
 ```{r}
 dt.hip.stats = fread("annotations/hip_stats.txt") %>%
-  filter(!is.na(race)) %>%
+  mutate(race = ifelse(is.na(race), "Unknown,Unknown", race)) %>%
   mutate(count_total = count, occurrences_total = diversity) %>%
-  select(sample_id, race, count_total, occurrences_total)
+  select(sample_id, race)
+
+# split race and origin
+
+tmp = str_split_fixed(dt.hip.stats$race, ",", n = 2)
+tmp[,2] = ifelse(tmp[,2] == "", tmp[,1], tmp[,2])
+tmp[,1] = ifelse(tmp[,2] == tmp[,1], "Unknown", tmp[,1])
+dt.hip.stats$race = tmp[,1]
+
+dt.hip.stats = dt.hip.stats %>% filter(race != "Unknown")
+
+summary(as.factor(dt.hip.stats$race))
 ```
 
 Load VDJdb annotations with 1 mismatch for HIP data (time consuming, ~ 2mln clonotypes)
@@ -40,13 +54,13 @@ VDJdb data
 
 ```{r}
 dt.vdjdb = fread("rearr_model/VDJDB_fullP_rob_ageing.txt") %>% 
-  filter(gene == "TRB") %>%
+  filter(gene == "TRB", mhc.class == "MHCI") %>%
   mutate(hla_spec = str_split_fixed(mhc.a, pattern = "[:,]", 2)[,1]) %>%
   select(cdr3, hla_spec, antigen.epitope, antigen.species) %>%
   group_by(antigen.epitope) %>%
   mutate(unique_cdrs = n()) %>%
   filter(unique_cdrs > 30) %>%
-  select(cdr3, hla_spec, antigen.epitope, antigen.species)
+  select(cdr3, antigen.epitope, antigen.species, unique_cdrs)
 ```
 
 Merge
@@ -60,52 +74,75 @@ dt.hip.m = dt.hip %>%
 Summarise by race
 
 ```{r}
-dt.hip.s = dt.hip.m %>%
-  group_by(race, hla_spec, antigen.epitope, antigen.species) %>%
-  summarise(occurrences = sum(occurrences), occurrences_total = sum(as.numeric(occurrences_total)))
+dt.hip.s = as.data.table(dt.hip.m) %>%
+  group_by(sample_id, race, antigen.epitope, antigen.species, unique_cdrs) %>%
+  summarise(occurrences = sum(occurrences)) %>%
+  group_by(sample_id) %>%
+  mutate(occurrences_share = occurrences / sum(occurrences) / unique_cdrs)
 ```
 
-Plot
+```{r}
+dt.p = data.table(antigen.epitope = unique(dt.hip.s$antigen.epitope), p = 1, freq.ratio_c = 1, freq.ratio_b = 1, freq.ratio_a = 1) %>%
+  merge(dt.hip.s %>% ungroup %>% select(antigen.species, antigen.epitope) %>% unique)
+
+for (i in 1:nrow(dt.p)) {
+  tmp = dt.hip.s %>% filter(antigen.epitope == dt.p$antigen.epitope[i])
+  tmp$race = as.factor(tmp$race)
+  dt.p$freq.ratio_c[i] = with(tmp, mean(occurrences_share[which(race=="caucasian")]) / mean(occurrences_share))
+  dt.p$freq.ratio_b[i] = with(tmp, mean(occurrences_share[which(race=="black or african american")]) / mean(occurrences_share))
+  dt.p$freq.ratio_a[i] = with(tmp, mean(occurrences_share[which(race=="asian or pacific islander")]) / mean(occurrences_share))
+  a = aov(occurrences_share ~ race, tmp)
+  dt.p$p[i] = summary(a)[[1]][["Pr(>F)"]][1]
+  #dt.p$p[i] = kruskal.test(occurrences_share ~ race, tmp)$p.value
+}
+
+dt.p$p = p.adjust(dt.p$p, method = "BH")
+dt.p$len = nchar(as.character(dt.p$antigen.epitope))
+
+kable(dt.p %>% arrange(p))
+
+good_epi = (dt.p %>% filter(p < 0.05))$antigen.epitope
+dt.hip.s = dt.hip.s %>%
+  mutate(antigen.epitope = ifelse(antigen.epitope %in% good_epi, paste(antigen.epitope, "(*)"),antigen.epitope))
+```
 
 ```{r}
+fancy_scientific = function(l) {
+     # turn in to character string in scientific notation
+     l = format(l, scientific = TRUE)
+     # quote the part before the exponent to keep all the digits
+     l = gsub("^(.*)e", "'\\1'e", l)
+     # turn the 'e+' into plotmath format
+     l = gsub("e", "%*%10^", l)
+     # return this as an expression
+     parse(text=l)
+}
+
 dt.hip.s.s = dt.hip.s %>%
-  filter(race == "caucasian,non-hispanic or latino") %>%
+  #filter(ucb == T) %>%
   group_by(antigen.epitope) %>%
-  summarise(freq = sum(occurrences) / sum(occurrences_total))
+  summarise(freq = mean(occurrences_share[which(race == "caucasian")]))
 
 dt.hip.s$antigen.epitope = factor(dt.hip.s$antigen.epitope, 
                                     levels = dt.hip.s.s$antigen.epitope[order(dt.hip.s.s$freq)])
 
-# tmp = dt.hip.s %>%
-#   group_by(sex, antigen.epitope) %>%
-#   summarise(freq = sum(occurrences) / sum(occurrences_total)) %>%
-#   dcast(antigen.epitope~sex, value.var= "freq")
-# freq.ratios = tmp[,3] / tmp[,2]
-# m=mean(freq.ratios)
-# ci = qnorm(0.975)*sd(freq.ratios)/sqrt(length(freq.ratios))
-# paste(round(m,2), round(m-ci,2), round(m+ci,2))
+dt.hip.s$race = toupper(substr(as.character(dt.hip.s$race), 1, 1))
 
-#wilcox.test(occurrences / occurrences_total ~ sex, dt.hip.s, paired=T)
-
-ggplot(dt.hip.s, aes(x = antigen.epitope, fill = race, y = occurrences / occurrences_total)) +
-  geom_bar(stat="identity", position = "dodge") +
+p19=ggplot(dt.hip.s, aes(x = antigen.epitope, group = paste(antigen.epitope,race), 
+                        fill = race, 
+                       y = occurrences_share)) +
+  geom_boxplot(color = "black") +
   coord_flip() +
   scale_fill_brewer(palette = "Set1") +
-  xlab("") + ylab("Fraction of rearrangements") +
-  theme_bw() +
-  theme(legend.position = "bottom")
-
-ggplot(dt.hip.s, aes(x = antigen.species, fill = race, y = occurrences / occurrences_total)) +
-  geom_boxplot(aes(group = paste(antigen.species, race))) +
-  coord_flip() +
-  scale_fill_brewer(palette = "Set1") +
-  xlab("") + ylab("Fraction of rearrangements") +
-  theme_bw()
-
-ggplot(dt.hip.s, aes(x = hla_spec, fill = race, y = occurrences / occurrences_total)) +
-  geom_boxplot(aes(group = paste(hla_spec, race))) +
-  coord_flip() +
-  scale_fill_brewer(palette = "Set1") +
-  xlab("") + ylab("Fraction of rearrangements") +
-  theme_bw()
+  scale_color_brewer(palette = "Set1") +
+  xlab("") + scale_y_continuous("Share of annotated rearrangements", 
+                                expand = c(0,0), labels = fancy_scientific) +
+  theme_bw()  +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+p19
 ```
+
+```{r}
+ggsave("figures/p19.pdf", p19, height = 12)
+```
+

@@ -1,0 +1,158 @@
+---
+title: "Epitope length"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(scales)
+library(stringr)
+```
+
+```{r}
+df.raw = fread("rearr_model/VDJDB_fullP_rob_ageing.txt") %>%
+  filter(mhc.class == "MHCI", species == "HomoSapiens", gene == "TRB") %>% 
+  mutate(epi.len = nchar(as.character(antigen.epitope)),
+         cdr3.len = nchar(as.character(cdr3)),
+         hla = str_split_fixed(mhc.a, fixed("*"), 10)[,1]) %>%
+  select(species, gene, cdr3, v.segm, j.segm, hla, cdr3.len, epi.len, cdr3.len, antigen.epitope, genP_1mism_rob) %>%
+  unique
+
+df.summary = df.raw %>%
+  group_by(species, antigen.epitope, hla, epi.len, cdr3.len) %>%
+  dplyr::summarise(count = n()) %>% 
+  arrange(-count)
+
+head(df.summary)
+
+mean(df.summary$count)
+
+print(df.summary %>%
+  group_by(species, epi.len, hla) %>%
+  dplyr::summarise(count = sum(count), n.epi = length(unique(antigen.epitope)), cdr3.len.mean=mean(cdr3.len)) %>% arrange(-count))
+
+df = df.raw %>% filter(epi.len %in% 8:11)
+```
+
+Comparing length distributions
+
+```{r}
+df.s = df %>%
+  group_by(epi.len) %>%
+  summarise(cdr3.len.m = mean(cdr3.len))
+
+p8=ggplot(df,
+       aes(x=cdr3.len, group=epi.len, fill = as.factor(epi.len))) +
+  #geom_histogram(binwidth = 1, aes(y=..density..), color = "black") +
+  geom_area(binwidth = 1, aes(y = ..density..), stat = "bin", position = "stack", color = "black") +
+  geom_vline(data=df.s, aes(xintercept = cdr3.len.m), linetype = "dashed") +
+  #geom_freqpoly(binwidth = 1, aes(y=..density..), color = "black", position = "stack") +
+  scale_x_continuous("CDR3 length", limits = c(7.5,21.5), breaks = seq(8,22,by=3)) + ylab("Fraction of clonotypes") +
+  scale_fill_brewer("Epitope length", palette = "RdBu") +
+  facet_grid(epi.len~.) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank(),
+        strip.text.y = element_blank())
+
+kruskal.test(cdr3.len ~ epi.len, df)
+summary(aov(cdr3.len ~ epi.len, df))
+p8
+```
+
+```{r}
+p9=ggplot(df.raw %>% filter(nchar(cdr3) %in% 7:22), aes(x = nchar(cdr3),  y = genP_1mism_rob)) +
+  stat_density_2d(geom = "tile", aes(fill=..density..), contour = F) +
+  geom_smooth(color = "red") +
+  scale_fill_gradient("Density", low = "white", high = "black") +
+  scale_x_continuous("CDR3 length", limits = c(7.5,21.5), breaks = seq(8,22,by=3)) + 
+  scale_y_log10("Theoretical rearrangement probability",
+                breaks = 10^(-15:-1),
+                label= function(x) {ifelse(x==0, "0", parse(text=gsub("[+]", "", gsub(".+e", "10^", scientific_format()(x)))))} ) +
+  theme_bw()  +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+kruskal.test(genP_1mism_rob ~ I(nchar(cdr3)), df.raw %>% filter(nchar(cdr3) %in% 7:22))
+summary(aov(log(genP_1mism_rob) ~ I(nchar(cdr3)), df.raw %>% filter(nchar(cdr3) %in% 7:22, genP_1mism_rob > 0)))
+
+p9
+```
+
+## CDR3 length and rearrangement probability
+
+```{r}
+```
+
+## Structural basis
+
+Epitope "bulging", note dist between C and N (X axis) is conserved for MHCI but not MHCII.
+
+```{r}
+df.struct.annot = fread("zcat struct/final.annotations.txt.gz") %>%
+  select(pdb_id, species, mhc_type, mhc_a_allele, mhc_b_allele) %>%
+  mutate(hla = ifelse(mhc_type == "MHCI",
+                      str_split_fixed(mhc_a_allele, fixed("*"), 10)[,1],
+                      paste(str_split_fixed(mhc_a_allele, fixed("*"), 10)[,1], str_split_fixed(mhc_b_allele, fixed("*"), 10)[,1], sep = ":")))
+  
+df.ag.coords = fread("zcat struct/backbone_ag.txt.gz") %>%
+  merge(df.struct.annot, allow.cartesian=T) %>%
+  select(pdb_id, species, mhc_type, hla, len_ag, pos_ag, x, y, z)
+
+colnames(df.ag.coords) = c("pdb_id", "species", "mhc_type", "hla", "len_ag", "pos_ag", "x_ag", "y_ag", "z_ag")
+
+p10=ggplot(df.ag.coords %>% filter(mhc_type == "MHCI" & species == "Homo_sapiens"), aes(x=pos_ag/(len_ag-1), y=z_ag)) +
+  geom_line(aes(group = pdb_id), size = 2, color="grey20") +
+  geom_line(aes(group = pdb_id, color = factor(len_ag))) +
+  scale_x_continuous("Relative position in antigen") +
+  scale_y_continuous("Z, Angstrom") +
+  scale_color_brewer("Epitope length", palette = "RdBu") +
+  theme_bw() +
+  theme(aspect = 1,
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        legend.position = c(0.2, 0.75),
+        legend.background = element_blank())
+p10
+```
+
+CDR3 bulging
+
+```{r}
+df.tcr.coords = fread("zcat struct/backbone.txt.gz") %>%
+  merge(df.ag.coords %>% select(pdb_id, len_ag) %>% unique) %>% filter(tcr_region == "CDR3" & mhc_type == "MHCI") %>%
+  mutate(tcr_chain = substr(tcr_v_allele,1,3)) %>%
+  select(pdb_id, species, mhc_type, len_ag, tcr_chain, len_tcr, pos_tcr, x, y, z)
+
+colnames(df.tcr.coords) = c("pdb_id", "species", "mhc_type", "len_ag", "tcr_chain", "len_tcr", "pos_tcr", "x_tcr", "y_tcr", "z_tcr")
+
+p11=ggplot(df.tcr.coords %>% filter(species == "Homo_sapiens", tcr_chain == "TRB"), aes(x=pos_tcr/(len_tcr-1), y=z_tcr)) +
+  geom_line(aes(group = pdb_id), size = 2, color = "grey20") +
+  geom_line(aes(group = pdb_id, color = factor(len_tcr))) +
+  scale_x_continuous("Relative position in CDR3") +
+  scale_y_continuous("Z, Angstrom") +
+  scale_color_brewer("CDR3 length", palette = "RdBu") +
+  theme_bw() +
+  theme(aspect = 1,
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        legend.position = c(0.15, 0.7),
+        legend.background = element_blank())
+p11
+```
+
+## Figures
+
+```{r}
+ggsave("figures/p8.pdf", p8, width = 4*2, height = 4)
+ggsave("figures/p9.pdf", p9, width = 4*2, height = 4)
+ggsave("figures/p10.pdf", p10, width = 4, height = 4)
+ggsave("figures/p11.pdf", p11, width = 4, height = 4)
+```

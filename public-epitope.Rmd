@@ -1,6 +1,8 @@
 ---
 title: "Rearrangement and selection of epitope-specific T-cell clonotypes"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -13,6 +15,7 @@ library(dplyr)
 library(ggplot2)
 library(reshape2)
 library(scales)
+library(stringr)
 ```
 
 ### Rearrangement model suppl
@@ -145,14 +148,56 @@ df.hip = df.hip.raw %>%
 ```
 
 ```{r}
-ggplot(df.hip, aes(x=genP_1mism_rob*3,y=freq)) +
-  geom_point(shape=21) +
-  geom_smooth(method = "lm") +
+fancy_scientific = function(l) {
+     # turn in to character string in scientific notation
+     l = format(l, scientific = TRUE)
+     # quote the part before the exponent to keep all the digits
+     l = gsub("^(.*)e", "'\\1'e", l)
+     # turn the 'e+' into plotmath format
+     l = gsub("e", "%*%10^", l)
+     # return this as an expression
+     parse(text=l)
+}
+
+lm_eqn = function(ll){
+    eq = substitute(italic(logY) == a + b %.% italic(logX)*","~~italic(R)^2~"="~r2, 
+         list(a = format(coef(ll)[1], digits = 2), 
+              b = format(coef(ll)[2], digits = 2), 
+             r2 = format(summary(ll)$r.squared, digits = 2)))
+    as.character(as.expression(eq))
+}
+
+rr = with(df.hip %>% filter(genP_1mism_rob > 0, freq > 0), cor.test(log10(genP_1mism_rob), log10(freq)))
+ll = with(df.hip %>% filter(genP_1mism_rob > 0, freq > 0), lm(log10(freq) ~ log10(genP_1mism_rob)))
+
+p1=ggplot(df.hip, aes(x=genP_1mism_rob,y=freq)) +
+  stat_density_2d(geom = "hex", aes(fill=..density..), contour = F) +
   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
-  scale_x_log10(limits=c(1e-13,1e-3)) +
-  scale_y_log10(limits=c(1e-13,1e-3)) +
-  scale_color_discrete(guide=F) +
-  theme_bw()
+  annotate(geom = "label", x = 1e-7, y = 1e-12, label = lm_eqn(ll), parse = T) +
+  scale_x_log10("Theoretical rearrangement probability", limits=c(1e-13,1e-3), labels = fancy_scientific) +
+  scale_y_log10("Observed rearrangement frequency", limits=c(1e-13,1e-3), labels = fancy_scientific) +
+  scale_fill_gradient("Density", low = "white", high = "black") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        aspect.ratio = 1, legend.position = c(0.15, 0.75))
+p1
+```
+
+Expected and observed difference between occurrences
+
+```{r}
+obs_ratio = as.numeric(10^(-coef(ll)[1]))
+
+mean_stop_prob = (df.hip.raw %>%
+  filter(DStart > 0) %>%
+  select(cdr3nt, VEnd, DStart, DEnd, JStart) %>%
+  unique %>%
+  summarise(mean_stop_prob = mean((61/64)^round((DStart - VEnd + JStart - DEnd + 2)/3))))$mean_stop_prob
+
+coding_prob = (1-2/3) * mean_stop_prob
+
+obs_ratio
+coding_prob
 ```
 
 ```{r}
@@ -182,6 +227,19 @@ ggplot(df.hip %>% filter(incidence > 0), aes(x=genP_1mism_rob, y=convergence)) +
 ```
 
 ```{r}
+p2=ggplot(df.hip %>% filter(convergence > 0), aes(x=genP_1mism_rob,y=convergence)) +
+  stat_density_2d(geom = "tile", aes(fill=..density..), contour = F) +
+  geom_smooth(color = "red") +
+  scale_x_log10("Theoretical rearrangement probability", limits=c(1e-13,1e-3), labels = fancy_scientific) +
+  scale_y_continuous("Unique variants per rearrangement (convergence)", expand = c(0,0), limits = c(-0.0001, 1.0001)) +
+  scale_fill_gradient("Density", low = "white", high = "black") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        aspect.ratio = 1, legend.position = c(0.15, 0.25))
+p2
+```
+
+```{r}
 dt.epicount3 = df.hip %>%
   group_by(antigen.epitope) %>%
   summarise(total = n(), 
@@ -201,6 +259,7 @@ good_epi = (dt.epicount3 %>% filter(total > 30 & found_frac > 0.75))$antigen.epi
 df.hip.all = df.hip
 df.hip = df.hip %>% filter(antigen.epitope %in% good_epi, mhc.class == "MHCI")
 ```
+
 
 ## Exploratory analysis
 
@@ -226,6 +285,22 @@ ggplot(df.hip.gp, aes(x=antigen.epitope, group = antigen.epitope, y=genP_1mism_r
 
 a = kruskal.test(freq ~ antigen.epitope, data = df.hip.gp)
 print(a)
+```
+
+```{r}
+p3=ggplot(df.hip.gp, aes(x=antigen.epitope, group = antigen.epitope, y=genP_1mism_rob)) +
+  geom_violin(fill = "black") + 
+  stat_summary(fun.y=median, geom="point", color="red") +
+  scale_y_log10("Theoretical rearrangement probability",
+                breaks = 10^(-15:-1),
+                label= function(x) {ifelse(x==0, "0", parse(text=gsub("[+]", "", gsub(".+e", "10^", scientific_format()(x)))))} ) +
+  xlab("") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        panel.grid.major.y = element_line(colour="grey50", linetype="dashed"),
+        panel.grid.minor.y = element_line(colour="grey50", linetype="dotted"),
+        panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank())
+p3
 ```
 
 ```{r}
@@ -301,6 +376,23 @@ TukeyHSD(aa, "antigen.species")
 ```
 
 ```{r}
+p4=ggplot(df.hip.gp, aes(x=antigen.species, y=genP_1mism_rob)) +
+  geom_violin(aes(group = antigen.species)) + 
+  geom_violin(fill = "black") + 
+  stat_summary(fun.y=median, geom="point", color="red") +
+  scale_y_log10("Theoretical rearrangement probability",
+                breaks = 10^(-15:-1),
+                label= function(x) {ifelse(x==0, "0", parse(text=gsub("[+]", "", gsub(".+e", "10^", scientific_format()(x)))))} ) +
+  xlab("") +
+  theme_bw() +
+  theme(aspect.ratio = 1, axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        panel.grid.major.y = element_line(colour="grey50", linetype="dashed"),
+        panel.grid.minor.y = element_line(colour="grey50", linetype="dotted"),
+        panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank())
+p4
+```
+
+```{r}
 df.hip.obs = df.hip %>%
   filter(freq > 0)
 df.hip.obs.s = df.hip.obs %>%
@@ -362,16 +454,25 @@ df.hip.frac = df.hip %>%
             publ_20 = sum(incidence > 0.20) / n())
 
 df.hip.frac$antigen.epitope = with(df.hip.frac,
-                                   factor(antigen.epitope, levels = antigen.epitope[order(publ_5)]))
+                                   factor(antigen.epitope, levels = antigen.epitope[order(-publ_5)]))
 
 df.hip.frac = df.hip.frac %>%
   melt
 
-ggplot(df.hip.frac, aes(x=antigen.epitope, y = value, fill = variable)) +
+df.hip.frac$publ = paste0(str_split_fixed(df.hip.frac$variable, "_", n = 2)[,2],"%")
+tmp = unique(df.hip.frac$publ)
+df.hip.frac$publ = factor(df.hip.frac$publ, levels = tmp[order(sapply(tmp, function(x) -as.numeric(gsub("%", "", x))))])
+
+p5=ggplot(df.hip.frac, 
+       aes(x=antigen.epitope, y = value, fill = publ)) +
   geom_bar(stat="identity", color = "black", position = "identity") +
-  coord_flip() +
-  scale_fill_brewer(palette = "RdBu") +
-  theme_bw()
+  scale_fill_brewer("Publicity", palette = "RdBu") +
+  scale_x_discrete("") + 
+  scale_y_continuous("Fraction of clonotypes", expand = c(0,0), limits = c(0,0.35)) +
+  theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+p5
 ```
 
 ```{r}
@@ -383,16 +484,25 @@ df.hip.frac = df.hip %>%
             publ_20 = sum(incidence > 0.20) / n())
 
 df.hip.frac$antigen.species = with(df.hip.frac,
-                                   factor(antigen.species, levels = antigen.species[order(publ_5)]))
+                                   factor(antigen.species, levels = antigen.species[order(-publ_5)]))
 
 df.hip.frac = df.hip.frac %>%
   melt
 
-ggplot(df.hip.frac, aes(x=antigen.species, y = value, fill = variable)) +
+df.hip.frac$publ = paste0(str_split_fixed(df.hip.frac$variable, "_", n = 2)[,2],"%")
+tmp = unique(df.hip.frac$publ)
+df.hip.frac$publ = factor(df.hip.frac$publ, levels = tmp[order(sapply(tmp, function(x) -as.numeric(gsub("%", "", x))))])
+
+p6=ggplot(df.hip.frac, 
+       aes(x=antigen.species, y = value, fill = publ)) +
   geom_bar(stat="identity", color = "black", position = "identity") +
-  coord_flip() +
-  scale_fill_brewer(palette = "RdBu") +
-  theme_bw()
+  scale_fill_brewer("Publicity", palette = "RdBu", guide = F) +
+  scale_x_discrete("") + 
+  scale_y_continuous("Fraction of clonotypes", expand = c(0,0), limits = c(0,0.35)) +
+  theme_bw() +
+    theme(aspect.ratio = 1, axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+p6
 ```
 
 ## Epitope properties and rearrangement prob/selection
@@ -431,9 +541,9 @@ dt.hip.prop = dt.epi.prop %>% merge(df.hip.all.1, by = "antigen.epitope", allow.
 ```
 
 ```{r}
-ggplot(dt.hip.prop, aes(x = value_c, group = value_c, y = genP_1mism_rob, fill = value_c)) +
-  geom_violin() +
-  stat_summary(fun.y=median, geom="point", shape=21, fill = "white", color="black") +
+ggplot(dt.hip.prop, aes(x = value_c, y = genP_1mism_rob)) +
+  geom_violin(aes(group = value_c, fill = value_c), draw_quantiles = c(0.25,0.5,0.75)) +
+  #stat_summary(fun.y=mean, geom="point", shape=21, fill = "white", color="black") +
   scale_y_log10() +
   scale_fill_brewer(guide = F, palette = "RdBu") +
   facet_wrap(~variable) +
@@ -469,8 +579,8 @@ dt.hip.prop.aov2 = dt.hip.prop %>%
   filter(genP_1mism_rob > 0) %>%
   group_by(variable) %>%
   summarise(F_P = summary(aov(log(P1)~value_c1, data.table(P1 = genP_1mism_rob, value_c1 = as.integer(value_c))))[[1]][["F value"]][1],
-            p_P = summary(aov(log(P1)~value_c1, data.table(P1 = genP_1mism_rob, value_c1 = as.integer(value_c))))[[1]][["Pr(>F)"]][1]) %>%
-  mutate(p_P_adj = p.adjust(p_P))
+            pa_P = summary(aov(log(P1)~value_c1, data.table(P1 = genP_1mism_rob, value_c1 = as.integer(value_c))))[[1]][["Pr(>F)"]][1]) %>%
+  mutate(pa_P_adj = p.adjust(pa_P))
 ```
 
 ```{r}
@@ -485,11 +595,75 @@ dt.hip.prop.cor2 = dt.hip.prop %>%
   filter(genP_1mism_rob > 0) %>%
   group_by(variable) %>%
   summarise(r_P = cor.test(genP_1mism_rob, value, method = "spearman")$estimate,
-            p_P = cor.test(genP_1mism_rob, value, method = "spearman")$p.value) %>%
-  mutate(p_P_adj = p.adjust(p_P))
+            pr_P = cor.test(genP_1mism_rob, value, method = "spearman")$p.value) %>%
+  mutate(pr_P_adj = p.adjust(pr_P))
 ```
 
+```{r}
+dt.hip.prop.1 = merge(dt.hip.prop.aov2, dt.hip.prop.cor2)
+print(dt.hip.prop.1)
 
+print(dt.hip.prop.1 %>% filter(pr_P_adj < 0.01 & pa_P_adj < 0.01))
+```
+
+```{r}
+df.hip.frac.prop = df.hip %>%
+  merge(dt.hip.prop %>% 
+          select(antigen.epitope, variable, value_c) %>% 
+          unique %>%
+          merge(dt.hip.prop.1 %>% filter(pr_P_adj < 0.01 & pa_P_adj < 0.01) %>% select(variable) %>% unique), 
+        by = "antigen.epitope", allow.cartesian = T) %>%
+  group_by(variable, value_c) %>%
+  summarise(publ_5 = sum(incidence > 0.05) / n(),
+            publ_10 = sum(incidence > 0.1) / n(),
+            publ_15 = sum(incidence > 0.15) / n(),
+            publ_20 = sum(incidence > 0.20) / n())
+
+
+df.hip.frac.prop$property = df.hip.frac.prop$variable
+df.hip.frac.prop$variable = NULL
+df.hip.frac.prop$property_level = df.hip.frac.prop$value_c
+df.hip.frac.prop$value_c = NULL
+
+df.hip.frac.prop = df.hip.frac.prop %>%
+  melt
+
+df.hip.frac.prop$variable = with(df.hip.frac.prop,
+                                 factor(paste0(str_split_fixed(variable, "_", 2)[,2], "%"), levels = rev(c("5%", "10%", "15%", "20%"))))
+
+df.hip.frac.prop$property_level2 = factor(with(df.hip.frac.prop,
+                                         ifelse(property == "len", as.character(as.integer(property_level) + 7), paste0("Q",property_level))), 
+                                         levels = c("Q1","Q2","Q3","Q4", "8", "9", "10", "11"))
+df.hip.frac.prop$property2 = with(df.hip.frac.prop,
+                                  ifelse(property=="len","Length", ifelse(property=="f6", "Partial specific volume", "Surrounding hydrophobicity")))
+# 6 - Partial specific volume,
+# 10 - Surrounding hydrophobicity
+p7=ggplot(df.hip.frac.prop, 
+       aes(x=property_level2, y = value, 
+           fill = variable)) +
+  geom_bar(stat="identity", color = "black", position = "identity") +
+  scale_fill_brewer("Population frequency", palette = "RdBu") +
+  scale_x_discrete("") + 
+  scale_y_continuous("Fraction of clonotypes", expand = c(0,0), limits = c(0,0.25)) +
+  facet_wrap(~property2, scales = "free_x") +
+  theme_bw() +
+    theme(legend.position = "bottom", axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        strip.background = element_blank())
+p7
+```
+
+## Figures
+
+```{r}
+ggsave("figures/p1.pdf", p1, width = 4, height = 4)
+ggsave("figures/p2.pdf", p2, width = 4, height = 4)
+ggsave("figures/p3.pdf", p3, width = 4*2, height = 4)
+ggsave("figures/p4.pdf", p4, width = 4, height = 4)
+ggsave("figures/p5.pdf", p5, width = 4*2, height = 4)
+ggsave("figures/p6.pdf", p6, width = 4, height = 4)
+ggsave("figures/p7.pdf", p7, width = 4*2, height = 4)
+```
 
 
 

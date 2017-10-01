@@ -17,6 +17,7 @@ library(reshape2)
 library(scales)
 library(parallel)
 library(stringr)
+library(knitr)
 ```
 
 ```{r}
@@ -39,13 +40,13 @@ VDJdb data
 
 ```{r}
 dt.vdjdb = fread("rearr_model/VDJDB_fullP_rob_ageing.txt") %>% 
-  filter(gene == "TRB") %>%
+  filter(gene == "TRB", mhc.class == "MHCI") %>%
   mutate(hla_spec = str_split_fixed(mhc.a, pattern = "[:,]", 2)[,1]) %>%
   select(cdr3, hla_spec, antigen.epitope, antigen.species) %>%
   group_by(antigen.epitope) %>%
   mutate(unique_cdrs = n()) %>%
   filter(unique_cdrs > 30) %>%
-  select(cdr3, hla_spec, antigen.epitope, antigen.species)
+  select(cdr3, hla_spec, antigen.epitope, antigen.species, unique_cdrs)
 ```
 
 Merge datasets
@@ -60,50 +61,115 @@ Summarise by epitope
 
 ```{r}
 dt.aging.s = dt.aging.m %>%
-  group_by(ucb, antigen.epitope, antigen.species, hla_spec) %>%
-  summarise(occurrences = sum(occurrences), occurrences_total = sum(as.numeric(occurrences_total)))
+  group_by(ucb, antigen.epitope, antigen.species, unique_cdrs) %>%
+  summarise(occurrences = sum(occurrences) / unique_cdrs[1]) %>%
+  merge(dt.aging.stats %>%
+          group_by(ucb) %>%
+          summarise(occurrences_total = sum(as.numeric(occurrences_total))))
 ```
 
 Distribution of epitopes in UCB and PBMC samples
 
 ```{r}
+fancy_scientific = function(l) {
+     # turn in to character string in scientific notation
+     l = format(l, scientific = TRUE)
+     # quote the part before the exponent to keep all the digits
+     l = gsub("^(.*)e", "'\\1'e", l)
+     # turn the 'e+' into plotmath format
+     l = gsub("e", "%*%10^", l)
+     # return this as an expression
+     parse(text=l)
+}
+
 dt.aging.s.s = dt.aging.s %>%
   filter(ucb == T) %>%
   group_by(antigen.epitope) %>%
-  summarise(freq = sum(occurrences) / sum(occurrences_total))
+  summarise(freq = sum(occurrences / unique_cdrs) / sum(occurrences_total))
 
 dt.aging.s$antigen.epitope = factor(dt.aging.s$antigen.epitope, 
                                     levels = dt.aging.s.s$antigen.epitope[order(dt.aging.s.s$freq)])
 
 tmp = dt.aging.s %>%
   group_by(ucb, antigen.epitope) %>%
-  summarise(freq = sum(occurrences) / sum(occurrences_total)) %>%
+  summarise(freq = sum(occurrences / unique_cdrs) / sum(occurrences_total)) %>%
   dcast(antigen.epitope~ucb, value.var= "freq")
 freq.ratios = tmp[,3] / tmp[,2]
 m=mean(freq.ratios)
 ci = qnorm(0.975)*sd(freq.ratios)/sqrt(length(freq.ratios))
 paste(round(m,2), round(m-ci,2), round(m+ci,2))
 
-wilcox.test(occurrences / occurrences_total ~ ucb, dt.aging.s, paired=T)
+t.test(occurrences / unique_cdrs / occurrences_total ~ ucb, dt.aging.s, paired=T)
 
-ggplot(dt.aging.s, aes(x = antigen.epitope, fill = ucb, y = occurrences / occurrences_total)) +
+p17=ggplot(dt.aging.s, aes(x = antigen.epitope, fill = ucb, 
+                       y = occurrences / unique_cdrs / occurrences_total)) +
   geom_bar(stat="identity", position = "dodge") +
   coord_flip() +
-  scale_fill_brewer(palette = "Set1") +
-  xlab("") + ylab("Fraction of rearrangements") +
-  theme_bw()
-
-ggplot(dt.aging.s, aes(x = antigen.species, fill = ucb, y = occurrences / occurrences_total)) +
-  geom_boxplot(aes(group = paste(antigen.species, ucb))) +
-  coord_flip() +
-  scale_fill_brewer(palette = "Set1") +
-  xlab("") + ylab("Fraction of rearrangements") +
-  theme_bw()
-
-ggplot(dt.aging.s, aes(x = hla_spec, fill = ucb, y = occurrences / occurrences_total)) +
-  geom_boxplot(aes(group = paste(hla_spec, ucb))) +
-  coord_flip() +
-  scale_fill_brewer(palette = "Set1") +
-  xlab("") + ylab("Fraction of rearrangements") +
-  theme_bw()
+  scale_fill_brewer("UCB", palette = "Set1") +
+  xlab("") + scale_y_continuous("Fraction of rearrangements", labels = fancy_scientific,
+                                expand = c(0,0), limits = c(0, 9e-7)) +
+  theme_bw()  +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+p17
 ```
+
+## Evenness of epitope-specific TCR occurrences
+
+```{r}
+dt.aging.s2 = as.data.table(dt.aging.m) %>%
+  group_by(sample_id, ucb, antigen.epitope, antigen.species, unique_cdrs) %>%
+  summarise(occurrences = sum(occurrences)) %>%
+  group_by(sample_id) %>%
+  mutate(occurrences_share = occurrences / sum(occurrences) / unique_cdrs)
+```
+
+```{r}
+dt.p = data.table(antigen.epitope = unique(dt.aging.s2$antigen.epitope), p = 1, freq.ratio = 1) %>%
+  merge(dt.aging.s2 %>% ungroup %>% select(antigen.species, antigen.epitope) %>% unique)
+
+for (i in 1:nrow(dt.p)) {
+  tmp = dt.aging.s2 %>% filter(antigen.epitope == dt.p$antigen.epitope[i])
+  dt.p$freq.ratio[i] = with(tmp, mean(occurrences_share[which(ucb)]) / mean(occurrences_share[which(!ucb)]))
+  dt.p$p[i] = t.test(occurrences_share ~ ucb, tmp)$p.value
+}
+
+dt.p$p = p.adjust(dt.p$p, method = "BH")
+dt.p$len = nchar(as.character(dt.p$antigen.epitope))
+
+kable(dt.p %>% arrange(p))
+
+good_epi = (dt.p %>% filter(p < 0.05))$antigen.epitope
+dt.aging.s2 = dt.aging.s2 %>%
+  mutate(antigen.epitope = ifelse(antigen.epitope %in% good_epi, paste(antigen.epitope, "(*)"),antigen.epitope))
+```
+
+```{r}
+dt.aging.s2.s = dt.aging.s2 %>%
+  #filter(ucb == T) %>%
+  group_by(antigen.epitope) %>%
+  summarise(freq = mean(occurrences_share[which(ucb)]))
+
+dt.aging.s2$antigen.epitope = factor(dt.aging.s2$antigen.epitope, 
+                                    levels = dt.aging.s2.s$antigen.epitope[order(dt.aging.s2.s$freq)])
+
+dt.aging.s2$epi.len = nchar(as.character(dt.aging.s2$antigen.epitope))
+
+p18=ggplot(dt.aging.s2, aes(x = antigen.epitope, group = paste(antigen.epitope,ucb), 
+                        fill = ucb,
+                       y = occurrences_share)) +
+  geom_boxplot() +
+  coord_flip() +
+  scale_fill_brewer(guide = F, palette = "Set1") +
+  xlab("") + scale_y_continuous("Share of annotated rearrangements", 
+                                expand = c(0,0), labels = fancy_scientific) +
+  theme_bw()  +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+p18
+```
+
+```{r}
+ggsave("figures/p17.pdf", p17)
+ggsave("figures/p18.pdf", p18)
+```
+
+

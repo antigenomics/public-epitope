@@ -61,7 +61,7 @@ ggplot(dt.vdjdb.hla %>% select(hla_spec, unique_cdrs) %>% unique,
   coord_flip() +
   theme_bw()
 
-good_hla_spec = (dt.vdjdb.hla %>% filter(unique_cdrs > MIN_HLA_CLONOTYPES))$hla_spec
+good_hla_spec = (dt.vdjdb.hla %>% filter(unique_cdrs > MIN_HLA_CLONOTYPES))$hla_spec %>% unique
 ```
 
 HLA summary from HIP data
@@ -127,13 +127,17 @@ dt.hip.s = dt.hip.m %>%
 Plot observed:expected number of rearrangements for matched and mismatched HLA specificity + donor HLA
 
 ```{r}
-ggplot(dt.hip.s, aes(x=hla_spec, y = obsexpratio)) +
-  geom_violin(aes(group = hla_spec), draw_quantiles = c(0.25, 0.5, 0.75), trim = F) +
-  geom_hline(yintercept = 1, linetype = "dashed") +
+p12=ggplot(dt.hip.s, aes(x=hla_spec, y = obsexpratio)) +
+  geom_violin(aes(group = hla_spec), fill = "black") +
   geom_point(data=dt.hip.s %>% filter(hla == hla_spec), color = "red") +
   ylab("Observed:expected number of rearrangements") + xlab("") +
   coord_flip() +
-  theme_bw()
+  theme_bw() +
+  theme(aspect = 0.5, panel.grid.major.x = element_line(colour="grey50", linetype="dashed"),
+        panel.grid.minor.x = element_line(colour="grey50", linetype="dotted"),
+        panel.grid.major.y = element_blank(), panel.grid.minor.y = element_blank())
+
+p12
 ```
 
 Stat test and plot test results
@@ -145,12 +149,15 @@ print(res)
 ```
 
 ```{r}
-ggplot(dt.hip.s, aes(x=hla_spec == hla, y = obsexpratio)) +
+p13=ggplot(dt.hip.s, aes(x=hla_spec == hla, y = obsexpratio)) +
   geom_boxplot(aes(fill = hla_spec == hla)) +
-  annotate("text", x = 1.5, y = 1.125, label = paste("italic(P) ==", round(res$p.value,3)), parse = T) +
+  #annotate("text", x = 1.5, y = 1.125, label = paste("italic(P) ==", round(res$p.value,3)), parse = T) +
   scale_fill_brewer(guide = F, palette = "Set1") +
   ylab("") + xlab("HLA match") +
-  theme_bw()
+  theme_bw() +
+  theme(aspect = 2,
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+p13
 ```
 
 ## CMV clonal expansions
@@ -199,15 +206,18 @@ dt.hip.p.s = dt.hip.p.s %>%
 Plotting CMV-specific clonotype expansions
 
 ```{r}
-ggplot(dt.hip.p.s %>% filter(antigen.species == "CMV"), 
+p14=ggplot(dt.hip.p.s %>% filter(antigen.species == "CMV"), 
        aes(x=freq_ratio, color = cmv)) +
-  stat_ecdf() + 
   geom_vline(xintercept = 1, linetype = "dashed") +
+  stat_ecdf() + 
   ylab("CDF") + 
-  scale_x_continuous("Ratio of frequency in HLA-matched and -mismatched samples", breaks = c(0,1,5,10)) +
+  scale_x_continuous("Ratio of frequency in HLA-matched and -mismatched samples", breaks = c(0,1,2,3,4,5), limits=c(0,5.5)) +
   scale_color_brewer("CMV status", palette = "Set1") +
   theme_bw() +
-  theme(legend.position = "bottom")
+  theme(aspect = 0.5, legend.direction = "vertical", legend.position = c(0.9, 0.2), 
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+p14
 
 ks.test((dt.hip.p.s %>% filter(antigen.species == "CMV", cmv == "+"))$freq_ratio,
         (dt.hip.p.s %>% filter(antigen.species == "CMV", cmv == "-"))$freq_ratio)
@@ -220,17 +230,159 @@ ks.test((dt.hip.p.s %>% filter(antigen.species == "CMV", cmv == "-"))$freq_ratio
 EBV-specific expansions by HLA (note EBV is extremely common)
 
 ```{r}
-ggplot(dt.hip.p.s %>% filter(antigen.species == "EBV",
-                             hla_spec != "HLA-B*44"), # Only 3 clonotypes here
-       aes(x=freq_ratio>1, fill = freq_ratio>1)) +
-  geom_bar(color = "black") + 
-  facet_wrap(~hla_spec, scales = "free") +
+dt.hip.p.ebv = dt.hip.p.s %>% filter(antigen.species == "EBV",
+                             hla_spec != "HLA-B*44") %>%
+  group_by(enriched = freq_ratio>1, hla_spec) %>%
+  summarise(count = n()) %>%
+  merge(dt.vdjdb.hla %>% select(hla_spec, unique_cdrs) %>% unique) %>%
+  mutate(p = count / unique_cdrs, sd = sqrt(count * p * (1-p)))
+
+p15=ggplot(dt.hip.p.ebv, # Only 3 clonotypes here
+       aes(x=enriched, y = count, fill = enriched)) +
+  geom_errorbar(aes(ymin = count, ymax = count + 1.96 * sd), width = 0.5) +
+  geom_bar(stat="identity", color = "black") +
+  facet_wrap(~hla_spec, scales = "free", ncol = 2) +
   ylab("# clonotypes") + 
   xlab("") +
-  scale_fill_brewer("Match to mismatch frequency ratio > 1", palette = "Set1") +
+  scale_fill_brewer("More in matched HLA", palette = "Set1") +
   theme_bw() +
-  theme(legend.position = "bottom",
+  theme(aspect = 0.8, legend.position = "bottom",
         axis.title.x=element_blank(),
         axis.text.x=element_blank(),
-        axis.ticks.x=element_blank())
+        axis.ticks.x=element_blank(),
+        strip.background = element_blank(), 
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+p15
+```
+
+## Heatmaps
+
+```{r}
+dt.vdjdb = fread("rearr_model/VDJDB_fullP_rob_ageing.txt") %>% 
+  filter(gene == "TRB", mhc.class == "MHCI") %>%
+  mutate(hla_spec = str_split_fixed(mhc.a, pattern = "[:,]", 2)[,1]) %>%
+  select(cdr3, antigen.epitope, antigen.species, hla_spec) %>%
+  group_by(antigen.epitope) %>%
+  mutate(unique_cdrs = n()) %>%
+  filter(unique_cdrs > 30) %>%
+  select(cdr3, antigen.epitope, antigen.species, hla_spec, unique_cdrs)
+
+dt.hip.m2 = dt.hip %>%
+  merge(dt.hip.stats) %>%
+  merge(dt.vdjdb)
+```
+
+```{r}
+dt.hip.s2 = dt.hip.m2 %>%
+  group_by(sample_id, hla, hla_spec, antigen.epitope, antigen.species, 
+           unique_cdrs, occurrences_total, count_total) %>%
+  summarise(occurrences = sum(occurrences), count = sum(count)) %>%
+  group_by(sample_id) %>%
+  mutate(occurrences_share = occurrences / sum(occurrences / unique_cdrs) / unique_cdrs,
+         count_share = count / sum(count / unique_cdrs) / unique_cdrs,
+         occurrences_freq = occurrences / occurrences_total / unique_cdrs,
+         count_freq = count / count_total / unique_cdrs)
+```
+
+```{r}
+dt.hip.hla.ann = 
+  rbindlist(lapply(mapply(list, dt.hip.stats$sample_id, dt.hip.stats$hla, SIMPLIFY=F),
+                                   function(x) data.table(sample_id = x[[1]], 
+                                                          hla = unlist(strsplit(x[[2]], ","))))) %>%
+  mutate(hla = ifelse(is.na(hla), "Unknown", hla)) %>%
+  select(sample_id, hla) %>% 
+  mutate(hla = ifelse(hla %in% good_hla_spec,hla,"Unknown")) %>% 
+  dcast(sample_id ~ hla)
+
+dt.hip.hla.ann$Unknown = NULL
+
+colnames(dt.hip.hla.ann) = c("sample_id", "A01", "A02", 
+                             "B07", "B08", "B27", 
+                             "B35", "B57")
+
+dt.hip.hla.ann = dt.hip.hla.ann %>%
+  melt %>% mutate(value = ifelse(value == 1, "+", "-/NA")) %>%
+  dcast(sample_id~variable)
+
+dt.hip.s2 = dt.hip.s2 %>% 
+  merge(dt.hip.hla.ann)
+```
+
+To matrix
+
+```{r}
+mat.hip.s = dt.hip.s2 %>%
+  dcast(sample_id + A01 + A02 + B07 + B08 + B27 + B35 + B57 ~ antigen.epitope, 
+        value.var = "occurrences_share", fill = 0, fun.aggregate = sum)
+
+mat.hip.s2 = dt.hip.s2 %>%
+  dcast(sample_id + A01 + A02 + B07 + B08 + B27 + B35 + B57 ~ antigen.epitope, 
+        value.var = "count_share", fill = 0, fun.aggregate = sum)
+
+dt.hip.s.annot.r = mat.hip.s %>%
+  select(A01, A02, B07, B08, B27, B35, B57)
+
+dt.hip.s.annot.c = data.table(antigen.epitope = colnames(mat.hip.s)[9:ncol(mat.hip.s)]) %>%
+  merge(dt.vdjdb %>% select(antigen.epitope, antigen.species, hla_spec) %>% 
+          unique %>% filter(hla_spec != "HLA-B*81"))
+dt.hip.s.annot.c$antigen.epitope = NULL
+
+row.names(mat.hip.s) = mat.hip.s$sample_id
+mat.hip.s = t(as.matrix(mat.hip.s[,9:ncol(mat.hip.s)]))
+row.names(mat.hip.s2) = mat.hip.s2$sample_id
+mat.hip.s2 = t(as.matrix(mat.hip.s2[,9:ncol(mat.hip.s2)]))
+```
+
+See here for params https://renozao.github.io/NMF/devel/vignettes/aheatmaps.pdf
+
+```{r}
+library(RColorBrewer)
+
+ann_colors = c()
+
+for (annR in colnames(dt.hip.s.annot.r)) {
+  n = length(unique(dt.hip.s.annot.r[[annR]]))
+  tmp = list(x = c("red", "grey"))
+  names(tmp) = annR
+  ann_colors = c(ann_colors, tmp)
+}
+
+for (annR in colnames(dt.hip.s.annot.c)) {
+  n = length(unique(dt.hip.s.annot.c[[annR]]))
+  tmp = list(x = c(brewer.pal(n, name = "Set1")[1:n]))
+  names(tmp) = annR
+  ann_colors = c(ann_colors, tmp)
+}
+```
+
+```{r fig.height=8, fig.width=6}
+aheatmap(t(mat.hip.s),
+         hclustfun = "ward",
+         annRow = dt.hip.s.annot.r %>% select(B07, B35),
+         annColors = ann_colors,
+         labRow = NA, scale = "none")
+
+aheatmap(t(mat.hip.s2),
+         hclustfun = "ward",
+         annRow = dt.hip.s.annot.r %>% select(B07, B35),
+         annColors = ann_colors,
+         labRow = NA, Colv=NA, scale = "none")
+
+pdf("figures/p16.pdf")
+aheatmap(t(mat.hip.s2),
+         hclustfun = "ward",
+         annRow = dt.hip.s.annot.r %>% select(B07, B35),
+         annColors = ann_colors,
+         labRow = NA, Colv=NA, scale = "none")
+dev.off()
+```
+
+
+## Figures
+
+```{r}
+ggsave("figures/p12.pdf", p12, width = 2*4, height = 4)
+ggsave("figures/p13.pdf", p13, width = 4, height = 4)
+ggsave("figures/p14.pdf", p14, width = 2*4, height = 4)
+ggsave("figures/p15.pdf", p15, width = 4, height = 8)
 ```
