@@ -168,8 +168,8 @@ p18
 ```
 
 ```{r}
-ggsave("figures/p17.pdf", p17)
-ggsave("figures/p18.pdf", p18)
+ggsave("figures/p17.pdf", p17, height = 8)
+ggsave("figures/p18.pdf", p18, height = 8)
 ```
 
 
