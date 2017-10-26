@@ -16,6 +16,8 @@ library(ggplot2)
 library(reshape2)
 library(scales)
 library(stringr)
+
+select = dplyr::select
 ```
 
 ### Rearrangement model suppl
@@ -183,6 +185,12 @@ p1=ggplot(df.hip, aes(x=genP_1mism_rob,y=freq)) +
 p1
 ```
 
+```{r}
+length(unique((df.hip %>% filter(genP_1mism_rob > 0, freq > 0))$cdr3))
+print(HIP_R)
+print(HIP_S)
+```
+
 Expected and observed difference between occurrences
 
 ```{r}
@@ -301,6 +309,38 @@ p3=ggplot(df.hip.gp, aes(x=antigen.epitope, group = antigen.epitope, y=genP_1mis
         panel.grid.minor.y = element_line(colour="grey50", linetype="dotted"),
         panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank())
 p3
+
+length(unique(df.hip.gp$antigen.epitope))
+
+a = kruskal.test(genP_1mism_rob ~ I(as.factor(antigen.epitope)), data = df.hip.gp)
+print(a)
+print(a$p.value)
+a = aov(log(genP_1mism_rob) ~ I(as.factor(antigen.epitope)), data = df.hip.gp)
+print(summary(a)[[1]][["Pr(>F)"]][1])
+summary(a)
+```
+
+```{r}
+tmp = df.hip.gp %>%
+  group_by(antigen.epitope) %>%
+  summarise(genP = median(genP_1mism_rob), count = n())
+
+p26= ggplot(tmp, aes(genP, count)) +
+  geom_smooth(method = "lm", color = "red") +
+  geom_point() +
+  ylab("Number of unique VDJdb TCRs") +
+  scale_x_log10("Theoretical rearrangement probability", limits = c(1e-8,1e-6)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        aspect.ratio = 1, legend.position = c(0.15, 0.25))
+p26
+
+print(cor.test(log(tmp$genP), tmp$count))
+```
+
+
+```{r}
+print(length(unique(df.hip.gp$antigen.epitope)))
 ```
 
 ```{r}
@@ -390,6 +430,13 @@ p4=ggplot(df.hip.gp, aes(x=antigen.species, y=genP_1mism_rob)) +
         panel.grid.minor.y = element_line(colour="grey50", linetype="dotted"),
         panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank())
 p4
+
+a = kruskal.test(genP_1mism_rob ~ I(as.factor(antigen.species)), data = df.hip.gp)
+print(a)
+print(a$p.value)
+a = aov(log(genP_1mism_rob) ~ I(as.factor(antigen.species)), data = df.hip.gp)
+print(summary(a)[[1]][["Pr(>F)"]][1])
+summary(a)
 ```
 
 ```{r}
@@ -462,6 +509,8 @@ df.hip.frac = df.hip.frac %>%
 df.hip.frac$publ = paste0(str_split_fixed(df.hip.frac$variable, "_", n = 2)[,2],"%")
 tmp = unique(df.hip.frac$publ)
 df.hip.frac$publ = factor(df.hip.frac$publ, levels = tmp[order(sapply(tmp, function(x) -as.numeric(gsub("%", "", x))))])
+
+length(unique(df.hip.frac$antigen.epitope))
 
 p5=ggplot(df.hip.frac, 
        aes(x=antigen.epitope, y = value, fill = publ)) +
@@ -589,7 +638,7 @@ dt.hip.prop.cor1 = dt.hip.prop %>%
   group_by(variable) %>%
   summarise(r_freq = cor.test(freq, value, method = "spearman")$estimate,
             p_freq = cor.test(freq, value, method = "spearman")$p.value) %>%
-  mutate(p_freq_adj = p.adjust(p_freq))
+  mutate(p_freq_adj = p.adjust(p_freq, method = "BH"))
 
 dt.hip.prop.cor2 = dt.hip.prop %>%
   filter(genP_1mism_rob > 0) %>%
@@ -617,7 +666,8 @@ df.hip.frac.prop = df.hip %>%
   summarise(publ_5 = sum(incidence > 0.05) / n(),
             publ_10 = sum(incidence > 0.1) / n(),
             publ_15 = sum(incidence > 0.15) / n(),
-            publ_20 = sum(incidence > 0.20) / n())
+            publ_20 = sum(incidence > 0.20) / n(),
+            tmp = n())
 
 
 df.hip.frac.prop$property = df.hip.frac.prop$variable
@@ -663,6 +713,7 @@ ggsave("figures/p4.pdf", p4, width = 4, height = 4)
 ggsave("figures/p5.pdf", p5, width = 4*2, height = 4)
 ggsave("figures/p6.pdf", p6, width = 4, height = 4)
 ggsave("figures/p7.pdf", p7, width = 4*2, height = 4)
+ggsave("figures/p26.pdf", p26, width = 4, height = 4)
 ```
 
 

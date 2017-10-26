@@ -146,6 +146,10 @@ Stat test and plot test results
 dt.hip.s$hla_match = with(dt.hip.s, hla_spec == hla)
 res = wilcox.test(obsexpratio~hla_match, dt.hip.s)
 print(res)
+
+tmp=dt.hip.s %>% group_by(match = hla_spec == hla) %>%
+  summarise(obsexpratio = mean(obsexpratio))
+tmp %>% filter(match == T) %>% .$obsexpratio / tmp %>% filter(match != T) %>% .$obsexpratio
 ```
 
 ```{r}

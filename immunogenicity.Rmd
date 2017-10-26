@@ -23,6 +23,8 @@ select = dplyr::select
 ```{r}
 dt.imm = fread("immunogenicity.txt")
 dt.vdjdb = fread("rearr_model/VDJDB_fullP_rob_ageing.txt")
+
+length(unique(dt.imm$antigen.epitope))
 ```
 
 ```{r}
@@ -130,12 +132,23 @@ dt.imm.ann = dt.imm.ann %>%
 ```
 
 ```{r}
+fancy_scientific = function(l) {
+     # turn in to character string in scientific notation
+     l = format(l, scientific = TRUE)
+     # quote the part before the exponent to keep all the digits
+     l = gsub("^(.*)e", "'\\1'e", l)
+     # turn the 'e+' into plotmath format
+     l = gsub("e", "%*%10^", l)
+     # return this as an expression
+     parse(text=l)
+}
+
 p22=ggplot(dt.imm.ann, 
        aes(x = tscore, y = pGen)) +
   geom_vline(xintercept = 0, linetype = "dashed") +
   geom_smooth(method = "lm", color = "red") +
   geom_point() +
-  scale_y_log10("Rearrangement probability") +
+  scale_y_log10("Rearrangement probability", labels = fancy_scientific) +
   scale_x_continuous("T-score (immunogenic vs non-immunogenic)") +
   theme_bw() +
   theme(aspect.ratio = 1,
@@ -242,7 +255,7 @@ p23=ggplot(dt.imm.ann.3, aes(x = Gamma.V1, y = pGen)) +
   #geom_vline(xintercept = 0.5, linetype = "dashed") +
   geom_smooth(method = "lm", color = "red") +
   geom_point() +
-  scale_y_log10("Rearrangement probability") +
+  scale_y_log10("Rearrangement probability", labels = fancy_scientific) +
   scale_x_continuous("P(Immunogenic)") +
   theme_bw() +
   theme(aspect.ratio = 1,
@@ -256,8 +269,8 @@ summary(lm(log(pGen) ~ Gamma.V1, dt.imm.ann.3))
 p24=ggplot(dt.imm.ann.3, aes(x = Gamma.unnorm.V1, y = pGen)) +
   geom_smooth(method = "lm", color = "red") +
   geom_point() +
-  scale_y_log10("Rearrangement probability") +
-  scale_x_log10("D(Immunogenic)") +
+  scale_y_log10("Rearrangement probability", labels = fancy_scientific) +
+  scale_x_log10("D(Immunogenic)", labels = fancy_scientific) +
   theme_bw() +
   theme(aspect.ratio = 1,
         panel.grid.major = element_blank(), panel.grid.minor = element_blank())
@@ -288,7 +301,7 @@ p25=ggplot(dt.pred_p %>% filter(!is.na(immunogenicity)), aes(x = exp(pGenPred),
                                                          color = immunogenicity)) +
   stat_ecdf() +
   ylab("CDF") +
-  scale_x_log10("Predicted rearrangement probability") +
+  scale_x_log10("Predicted rearrangement probability", labels = fancy_scientific) +
   scale_color_brewer("Immunogenicity", palette = "Set1") +
   theme_bw() + 
   theme(aspect = 1,
@@ -300,12 +313,12 @@ ks.test((dt.pred_p %>% filter(!is.na(immunogenicity) & immunogenicity == "Positi
 ```
 
 ```{r}
-ggsave("p20.pdf", p20)
-ggsave("p21.pdf", p21)
-ggsave("p22.pdf", p22)
-ggsave("p23.pdf", p23)
-ggsave("p24.pdf", p24)
-ggsave("p25.pdf", p25)
+ggsave("figures/p20.pdf", p20)
+ggsave("figures/p21.pdf", p21)
+ggsave("figures/p22.pdf", p22)
+ggsave("figures/p23.pdf", p23)
+ggsave("figures/p24.pdf", p24)
+ggsave("figures/p25.pdf", p25)
 ```
 
 

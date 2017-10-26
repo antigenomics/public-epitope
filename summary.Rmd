@@ -1,0 +1,29 @@
+---
+title: "summary"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+dt.hip.stats = fread("annotations/hip_stats.txt") %>%
+  mutate(race = ifelse(is.na(race), "Unknown,Unknown", race)) %>%
+  mutate(count_total = count, occurrences_total = diversity)
+
+# split race and origin
+
+tmp = str_split_fixed(dt.hip.stats$race, ",", n = 2)
+tmp[,2] = ifelse(tmp[,2] == "", tmp[,1], tmp[,2])
+tmp[,1] = ifelse(tmp[,2] == tmp[,1], "Unknown", tmp[,1])
+dt.hip.stats$race = tmp[,1]
+
+summary(as.factor(dt.hip.stats$race))
+```
+
+```{r}
+fread("annotations/aging_stats.txt") %>%
+  summarise(rearrangements = sum(diversity)) %>%
+  .$rearrangements
+```

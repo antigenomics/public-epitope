@@ -70,6 +70,8 @@ summary(aov(cdr3.len ~ epi.len, df))
 p8
 ```
 
+## CDR3 length and rearrangement probability
+
 ```{r}
 p9=ggplot(df.raw %>% filter(nchar(cdr3) %in% 7:22), aes(x = nchar(cdr3),  y = genP_1mism_rob)) +
   stat_density_2d(geom = "tile", aes(fill=..density..), contour = F) +
@@ -88,11 +90,6 @@ summary(aov(log(genP_1mism_rob) ~ I(nchar(cdr3)), df.raw %>% filter(nchar(cdr3) 
 p9
 ```
 
-## CDR3 length and rearrangement probability
-
-```{r}
-```
-
 ## Structural basis
 
 Epitope "bulging", note dist between C and N (X axis) is conserved for MHCI but not MHCII.
@@ -103,6 +100,8 @@ df.struct.annot = fread("zcat struct/final.annotations.txt.gz") %>%
   mutate(hla = ifelse(mhc_type == "MHCI",
                       str_split_fixed(mhc_a_allele, fixed("*"), 10)[,1],
                       paste(str_split_fixed(mhc_a_allele, fixed("*"), 10)[,1], str_split_fixed(mhc_b_allele, fixed("*"), 10)[,1], sep = ":")))
+
+length(unique(df.struct.annot$pdb_id))
   
 df.ag.coords = fread("zcat struct/backbone_ag.txt.gz") %>%
   merge(df.struct.annot, allow.cartesian=T) %>%

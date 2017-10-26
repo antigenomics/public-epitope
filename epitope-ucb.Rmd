@@ -57,60 +57,37 @@ dt.aging.m = dt.aging %>%
   merge(dt.aging.stats)
 ```
 
-Summarise by epitope
+## Enrichment
+
+Compute number of annotated variants for MHCI and II
 
 ```{r}
-dt.aging.s = dt.aging.m %>%
-  group_by(ucb, antigen.epitope, antigen.species, unique_cdrs) %>%
-  summarise(occurrences = sum(occurrences) / unique_cdrs[1]) %>%
-  merge(dt.aging.stats %>%
-          group_by(ucb) %>%
-          summarise(occurrences_total = sum(as.numeric(occurrences_total))))
+dt.aging.all = dt.aging %>%
+  merge(fread("rearr_model/VDJDB_fullP_rob_ageing.txt") %>% 
+          select(cdr3, mhc.class)) %>%
+  merge(dt.aging.stats) %>%
+  group_by(sample_id, mhc.class, ucb, occurrences_total) %>%
+  summarise(occurrences = sum(occurrences))
 ```
 
-Distribution of epitopes in UCB and PBMC samples
-
 ```{r}
-fancy_scientific = function(l) {
-     # turn in to character string in scientific notation
-     l = format(l, scientific = TRUE)
-     # quote the part before the exponent to keep all the digits
-     l = gsub("^(.*)e", "'\\1'e", l)
-     # turn the 'e+' into plotmath format
-     l = gsub("e", "%*%10^", l)
-     # return this as an expression
-     parse(text=l)
-}
-
-dt.aging.s.s = dt.aging.s %>%
-  filter(ucb == T) %>%
-  group_by(antigen.epitope) %>%
-  summarise(freq = sum(occurrences / unique_cdrs) / sum(occurrences_total))
-
-dt.aging.s$antigen.epitope = factor(dt.aging.s$antigen.epitope, 
-                                    levels = dt.aging.s.s$antigen.epitope[order(dt.aging.s.s$freq)])
-
-tmp = dt.aging.s %>%
-  group_by(ucb, antigen.epitope) %>%
-  summarise(freq = sum(occurrences / unique_cdrs) / sum(occurrences_total)) %>%
-  dcast(antigen.epitope~ucb, value.var= "freq")
-freq.ratios = tmp[,3] / tmp[,2]
-m=mean(freq.ratios)
-ci = qnorm(0.975)*sd(freq.ratios)/sqrt(length(freq.ratios))
-paste(round(m,2), round(m-ci,2), round(m+ci,2))
-
-t.test(occurrences / unique_cdrs / occurrences_total ~ ucb, dt.aging.s, paired=T)
-
-p17=ggplot(dt.aging.s, aes(x = antigen.epitope, fill = ucb, 
-                       y = occurrences / unique_cdrs / occurrences_total)) +
-  geom_bar(stat="identity", position = "dodge") +
-  coord_flip() +
+p17=ggplot(dt.aging.all, aes(x = ucb, fill = ucb, y = occurrences/occurrences_total)) +
+  geom_boxplot() +
+  facet_wrap(~mhc.class, scales = "free") +
   scale_fill_brewer("UCB", palette = "Set1") +
-  xlab("") + scale_y_continuous("Fraction of rearrangements", labels = fancy_scientific,
-                                expand = c(0,0), limits = c(0, 9e-7)) +
+  xlab("") + scale_y_continuous("Fraction rearrangements annotated with VDJdb", 
+                                labels = percent) +
   theme_bw()  +
-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        strip.background=element_blank())
 p17
+
+t.test(occurrences/occurrences_total ~ ucb, dt.aging.all %>% filter(mhc.class == "MHCI"))
+t.test(occurrences/occurrences_total ~ ucb, dt.aging.all %>% filter(mhc.class == "MHCII"))
 ```
 
 ## Evenness of epitope-specific TCR occurrences
@@ -168,7 +145,7 @@ p18
 ```
 
 ```{r}
-ggsave("figures/p17.pdf", p17, height = 8)
+ggsave("figures/p17.pdf", p17, height = 6)
 ggsave("figures/p18.pdf", p18, height = 8)
 ```
 
