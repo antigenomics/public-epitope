@@ -1,0 +1,343 @@
+---
+title: "AB pairing"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(data.table)
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(scales)
+library(forcats)
+library(gridExtra)
+```
+
+### Preprocessing pairseq data
+
+PairSEQ data by Howie
+
+```{r}
+dt.pairs = fread("zcat tcr_ab_pairs.txt.gz") %>%
+  filter(startsWith(aaSeqCDR3, "C"), endsWith(aaSeqCDR3, "F") | endsWith(aaSeqCDR3, "W"))
+```
+
+Transform table, count the number of rearrangements
+
+```{r}
+dt.pairs.1 = dt.pairs %>%
+  filter(chain == "A") %>%
+  mutate(nSeqCDR3.A = nSeqCDR3, 
+         aaSeqCDR3.A = aaSeqCDR3, 
+         allVGenes.A = allVGenes,
+         allJGenes.A = allJGenes) %>%
+  select(sample, clone, nSeqCDR3.A, aaSeqCDR3.A, allVGenes.A, allJGenes.A) %>%
+  merge(dt.pairs %>%
+          filter(chain == "B") %>%
+          mutate(nSeqCDR3.B = nSeqCDR3, 
+                 aaSeqCDR3.B = aaSeqCDR3, 
+                 allVGenes.B = allVGenes, 
+                 allJGenes.B = allJGenes) %>%
+          select(sample, clone, nSeqCDR3.B, aaSeqCDR3.B, allVGenes.B, allJGenes.B)) %>%
+  select(-clone) %>%
+  unique %>%
+  group_by(aaSeqCDR3.A, aaSeqCDR3.B) %>%
+  summarise(count = n(), 
+            allVGenes.A = allVGenes.A[1], allVGenes.B = allVGenes.B[1],
+            allJGenes.A = allJGenes.A[1], allJGenes.B = allJGenes.B[1],
+            nSeqCDR3.A = nSeqCDR3.A[1], nSeqCDR3.B = nSeqCDR3.B[1])
+```
+
+### Annotation
+
+Create mock VDJtools format datasets
+
+```{r}
+dt.pairs.1 %>%
+  group_by(CDR3aa = aaSeqCDR3.A) %>%
+  summarise(count = n(), CDR3nt = nSeqCDR3.A[1], 
+            V = allVGenes.A[1], D = "", J = allJGenes.A[1]) %>%
+  ungroup %>%
+  mutate(freq = count / sum(count)) %>%
+  select(count, freq, CDR3nt, CDR3aa, V, D, J) %>%
+  fwrite("pairs.a.txt", sep = "\t")
+
+dt.pairs.1 %>%
+  group_by(CDR3aa = aaSeqCDR3.B) %>%
+  summarise(count = n(), CDR3nt = nSeqCDR3.B[1], 
+            V = allVGenes.B[1], D = "", J = allJGenes.B[1]) %>%
+  ungroup %>%
+  mutate(freq = count / sum(count)) %>%
+  select(count, freq, CDR3nt, CDR3aa, V, D, J) %>%
+  fwrite("pairs.b.txt", sep = "\t")
+```
+
+Annotate
+
+```{r}
+system("rm pairs.a.txt.gz")
+system("gzip pairs.a.txt")
+system("rm pairs.b.txt.gz")
+system("gzip pairs.b.txt")
+system("java -Xmx40G -jar ../vdjdb_new/vdjdb-1.1.6.jar -S human -R TRA --search-scope 1,0,0,1 pairs.a.txt.gz a")
+system("java -Xmx40G -jar ../vdjdb_new/vdjdb-1.1.6.jar -S human -R TRB --search-scope 1,0,0,1 pairs.b.txt.gz b")
+```
+
+### Annotation statistics
+
+Select epitopes that have both alpha and beta
+
+```{r}
+dt.epi = fread("../vdjdb_new/vdjdb.slim.txt") %>%
+  filter(species == "HomoSapiens") %>%
+  group_by(gene, antigen.epitope) %>%
+  summarise(db.count = length(unique(cdr3))) %>%
+  filter(db.count >= 30) %>%
+  group_by(antigen.epitope) %>%
+  mutate(chains = length(unique(gene))) %>%
+  filter(chains == 2) %>%
+  select(-chains)
+```
+
+Load annotated sequences
+
+```{r}
+dt.ann.a = fread("a.pairs.a.annot.txt") %>%
+  mutate(cdr3.a = cdr3aa) %>%
+  select(count, cdr3.a, antigen.epitope) %>%
+  unique %>%
+  merge(dt.epi %>% 
+          filter(gene == "TRA") %>%
+          mutate(db.count.a = db.count) %>%
+          select(db.count.a, antigen.epitope))
+
+dt.ann.b = fread("b.pairs.b.annot.txt") %>%
+  filter(antigen.epitope %in% dt.epi$antigen.epitope) %>%
+  mutate(cdr3.b = cdr3aa) %>%
+  select(count, cdr3.b, antigen.epitope) %>%
+  unique %>%
+  merge(dt.epi %>% 
+          filter(gene == "TRB") %>%
+          mutate(db.count.b = db.count) %>%
+          select(db.count.b, antigen.epitope))
+```
+
+Paired annotations
+
+```{r}
+dt.ann.ab = dt.pairs.1 %>%
+  ungroup %>%
+  mutate(cdr3.a = aaSeqCDR3.A, cdr3.b = aaSeqCDR3.B) %>%
+  select(count, cdr3.a, cdr3.b) %>%
+  merge(dt.ann.a %>% select(-count)) %>%
+  merge(dt.ann.b %>% select(-count))
+```
+
+Plot annotated percent
+
+```{r}
+total = sum(dt.pairs.1$count)
+pa = dt.ann.a %>% .$count %>% sum / total
+pb = dt.ann.b %>% .$count %>% sum / total
+pab = dt.ann.ab %>% .$count %>% sum / total
+
+ann_stats = data.frame(type = factor(c("A", "B", "AB"), 
+                                     levels = c("A", "B", "AB")),
+                       p = c(pa, pb, pab))
+
+p1 = ggplot(ann_stats, aes(x = type, y = p, fill = type)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_y_continuous("Matched to VDJdb", labels = percent) +
+  scale_fill_brewer(guide = F, palette = "Set1") +
+  xlab("") +
+  theme_bw() +
+  theme(aspect = 1, panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+p1
+
+pdf("p1.pdf")
+p1
+dev.off()
+```
+
+### Statistics by epitope
+
+Alpha versus beta
+
+```{r}
+dt.ann.a.s = dt.ann.a %>%
+  group_by(antigen.epitope, db.count.a) %>%
+  summarise(count.a = sum(count)) %>%
+  merge(dt.epi %>% 
+          filter(gene == "TRA") %>%
+          mutate(db.count.a = db.count) %>%
+          select(db.count.a, antigen.epitope), all.y = T) %>%
+  mutate(count.a = ifelse(is.na(count.a), 0, count.a),
+         pa = count.a / total / db.count.a)
+
+dt.ann.b.s = dt.ann.b %>%
+  group_by(antigen.epitope, db.count.b) %>%
+  summarise(count.b = sum(count)) %>%
+  merge(dt.epi %>% 
+          filter(gene == "TRB") %>%
+          mutate(db.count.b = db.count) %>%
+          select(db.count.b, antigen.epitope), all.y = T) %>%
+  mutate(count.b = ifelse(is.na(count.b), 0, count.b),
+         pb = count.b / total / db.count.b)
+
+dt.ann.ab.s1 = dt.ann.a.s %>%
+  select(pa, antigen.epitope) %>%
+  merge(dt.ann.b.s %>%
+          select(pb, antigen.epitope)) %>%
+  filter(pa > 0 & pb > 0)
+
+### correlation
+
+cres = with(dt.ann.ab.s1, cor.test(pa, pb))
+lbl = paste0("R=", round(cres$estimate, 2), ", P=", round(cres$p.value, 3))
+
+### contingency
+
+#dt.ann.ab.s2 = dt.ann.a.s %>%
+#  select(pa, antigen.epitope) %>%
+#  merge(dt.ann.b.s %>%
+#          select(pb, antigen.epitope)) %>%
+#  summarise(not.found = sum(pa == 0 & pb == 0),
+#            found.both = sum(pa > 0 & pb > 0),
+#            found.aonly = sum(pa > 0 & pb == 0),
+#            found.bonly = sum(pa == 0 & pb > 0))
+#
+#
+#tmp = with(dt.ann.ab.s2, matrix(c(not.found, found.bonly, found.aonly, found.both), 
+#           nrow = 2, ncol = 2))
+#tt = tableGrob(tmp, 
+#           rows = c("A-", "A+"), cols = c("B-", "B+"),
+#           theme = ttheme_minimal())
+
+### plot all together
+
+p2=ggplot(dt.ann.ab.s1, aes(x = pa, y = pb)) +
+  annotate("text", x = 3.5e-5, y = 2.3e-5, label = lbl) +
+  geom_smooth(method = "lm") +
+  geom_text(aes(y = pb + 1e-6, label = substr(antigen.epitope, 1, 3))) +
+  geom_point(size = 3) +
+  xlab("Mean TRA frequency") +
+  ylab("Mean TRB frequency") +
+  #annotation_custom(grob = tt, xmin = 5e-5, xmax = 7e-5, ymin = 2.5e-6, ymax = 7.5e-6) +
+  theme_bw() +
+  theme(aspect = 1, panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+p2
+
+pdf("p2.pdf")
+p2
+dev.off()
+```
+
+```{r}
+dt.ann.ab.s3 = dt.ann.ab %>%
+  group_by(antigen.epitope, db.count.a, db.count.b) %>%
+  summarise(count.ab = sum(count)) %>%
+  ungroup %>%
+  mutate(pab = count.ab / total / db.count.a / db.count.b) %>%
+  select(antigen.epitope, pab) %>%
+  merge(dt.ann.a.s %>%
+          select(pa, antigen.epitope)) %>%
+  merge(dt.ann.b.s %>%
+          select(pb, antigen.epitope))
+
+cres = with(dt.ann.ab.s3, cor.test(pa * pb, pab))
+lbl = paste0("R=", round(cres$estimate, 2), ", P=", round(cres$p.value, 3))
+
+p3=ggplot(dt.ann.ab.s3, aes(x = pa * pb, y = pab)) +
+  annotate("text", x = 4e-10, y = 2e-9, label = lbl) +
+  geom_smooth(method = "lm") +
+  geom_text(aes(y = pab + 1e-10, label = substr(antigen.epitope, 1, 3))) +
+  geom_point(size = 3) +
+  xlab("(Mean TRA frequency) x (Mean TRB frequency)") +
+  ylab("Mean TRA-TRB pair frequency") +
+  theme_bw() +
+  theme(aspect = 1, panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+p3
+
+pdf("p3.pdf")
+p3
+dev.off()
+```
+
+## Theoretical probabilities
+
+```{r}
+dt.vdjdb.pgen = fread("zcat vdjdb_ab_pgen.txt.gz") %>%
+  select(cdr3.alpha, v.alpha, cdr3.beta, v.beta, antigen.epitope,
+         genP_1mism_alpha, genP_1mism_beta) %>%
+  unique %>%
+  filter(antigen.epitope %in% dt.epi$antigen.epitope)
+```
+
+Summarise probabilities
+
+```{r}
+dt.vdjdb.pgen.s = dt.vdjdb.pgen %>%
+  group_by(antigen.epitope) %>%
+  summarise(pa = mean(genP_1mism_alpha, na.rm=T),
+            pb = mean(genP_1mism_beta, na.rm=T),
+            pab = mean(genP_1mism_alpha * genP_1mism_beta, na.rm=T))
+
+cres = with(dt.vdjdb.pgen.s, cor.test(pa, pb))
+lbl = paste0("R=", round(cres$estimate, 2), ", P=", round(cres$p.value, 3))
+
+p4=ggplot(dt.vdjdb.pgen.s, aes(x = pa, y = pb)) +
+  annotate("text", x = 2e-5, y = 5e-6, label = lbl) +
+  geom_smooth(method = "lm") +
+  geom_point(size = 3) +
+  geom_text(aes(y = pb + 3e-7, label = substr(antigen.epitope, 1, 3))) +
+  xlab("Mean Pgen[TRA]") +
+  ylab("Mean Pgen[TRB]") +
+  theme_bw() +
+  theme(aspect = 1, panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+p4
+pdf("p4.pdf")
+p4
+dev.off()
+
+cres = with(dt.vdjdb.pgen.s, cor.test(pa * pb, pab))
+lbl = paste0("R=", round(cres$estimate, 2), ", P=", round(cres$p.value, 3))
+
+p5=ggplot(dt.vdjdb.pgen.s, aes(x = pa * pb, y = pab)) +
+  annotate("text", x = 0.7e-10, y = 4.5e-10, label = lbl) +
+  geom_smooth(method = "lm") +
+  geom_text(aes(y = pab + 3e-11, label = substr(antigen.epitope, 1, 3))) +
+  geom_point(size = 3) +
+  xlab("(Mean Pgen[TRA]) x (Mean Pgen[TRB])") +
+  ylab("Mean Pgen[TRA,TRB]") +
+  theme_bw() +
+  theme(aspect = 1, panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+p5
+pdf("p5.pdf")
+p5
+dev.off()
+
+cres = with(dt.vdjdb.pgen.s, cor.test(pb, pab))
+lbl = paste0("R=", round(cres$estimate, 2), ", P=", round(cres$p.value, 4))
+
+p6=ggplot(dt.vdjdb.pgen.s, aes(x = pb, y = pab)) +
+  annotate("text", x = 2e-6, y = 4.5e-10, label = lbl) +
+  geom_smooth(method = "lm") +
+  geom_text(aes(y = pab + 3e-11, label = substr(antigen.epitope, 1, 3))) +
+  geom_point(size = 3) +
+  xlab("Mean Pgen[TRB]") +
+  ylab("Mean Pgen[TRA,TRB]") +
+  theme_bw() +
+  theme(aspect = 1, panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+p6
+pdf("p6.pdf")
+p6
+dev.off()
+```
+
