@@ -102,7 +102,9 @@ dt.epi = fread("../vdjdb_new/vdjdb.slim.txt") %>%
   group_by(antigen.epitope) %>%
   mutate(chains = length(unique(gene))) %>%
   filter(chains == 2) %>%
-  select(-chains)
+  select(-chains) %>%
+  filter(!startsWith(antigen.epitope, "FRD") &
+           !startsWith(antigen.epitope, "LLL")) # unpaired only
 ```
 
 Load annotated sequences
@@ -141,7 +143,7 @@ dt.ann.ab = dt.pairs.1 %>%
 
 Plot annotated percent
 
-```{r}
+```{r fig.width=4, fig.height=4}
 total = sum(dt.pairs.1$count)
 pa = dt.ann.a %>% .$count %>% sum / total
 pb = dt.ann.b %>% .$count %>% sum / total
@@ -161,7 +163,7 @@ p1 = ggplot(ann_stats, aes(x = type, y = p, fill = type)) +
 
 p1
 
-pdf("p1.pdf")
+pdf("p1.pdf", width = 4, height = 4)
 p1
 dev.off()
 ```
@@ -170,7 +172,7 @@ dev.off()
 
 Alpha versus beta
 
-```{r}
+```{r fig.width=4, fig.height=4}
 dt.ann.a.s = dt.ann.a %>%
   group_by(antigen.epitope, db.count.a) %>%
   summarise(count.a = sum(count)) %>%
@@ -197,30 +199,8 @@ dt.ann.ab.s1 = dt.ann.a.s %>%
           select(pb, antigen.epitope)) %>%
   filter(pa > 0 & pb > 0)
 
-### correlation
-
 cres = with(dt.ann.ab.s1, cor.test(pa, pb))
-lbl = paste0("R=", round(cres$estimate, 2), ", P=", round(cres$p.value, 3))
-
-### contingency
-
-#dt.ann.ab.s2 = dt.ann.a.s %>%
-#  select(pa, antigen.epitope) %>%
-#  merge(dt.ann.b.s %>%
-#          select(pb, antigen.epitope)) %>%
-#  summarise(not.found = sum(pa == 0 & pb == 0),
-#            found.both = sum(pa > 0 & pb > 0),
-#            found.aonly = sum(pa > 0 & pb == 0),
-#            found.bonly = sum(pa == 0 & pb > 0))
-#
-#
-#tmp = with(dt.ann.ab.s2, matrix(c(not.found, found.bonly, found.aonly, found.both), 
-#           nrow = 2, ncol = 2))
-#tt = tableGrob(tmp, 
-#           rows = c("A-", "A+"), cols = c("B-", "B+"),
-#           theme = ttheme_minimal())
-
-### plot all together
+lbl = paste0("R=", round(cres$estimate, 2), ", P=", round(cres$p.value, 2))
 
 p2=ggplot(dt.ann.ab.s1, aes(x = pa, y = pb)) +
   annotate("text", x = 3.5e-5, y = 2.3e-5, label = lbl) +
@@ -234,12 +214,12 @@ p2=ggplot(dt.ann.ab.s1, aes(x = pa, y = pb)) +
   theme(aspect = 1, panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 p2
 
-pdf("p2.pdf")
+pdf("p2.pdf", width = 4, height = 4)
 p2
 dev.off()
 ```
 
-```{r}
+```{r fig.width=4, fig.height=4}
 dt.ann.ab.s3 = dt.ann.ab %>%
   group_by(antigen.epitope, db.count.a, db.count.b) %>%
   summarise(count.ab = sum(count)) %>%
@@ -252,7 +232,7 @@ dt.ann.ab.s3 = dt.ann.ab %>%
           select(pb, antigen.epitope))
 
 cres = with(dt.ann.ab.s3, cor.test(pa * pb, pab))
-lbl = paste0("R=", round(cres$estimate, 2), ", P=", round(cres$p.value, 3))
+lbl = paste0("R=", round(cres$estimate, 2), ", P=", round(cres$p.value, 2))
 
 p3=ggplot(dt.ann.ab.s3, aes(x = pa * pb, y = pab)) +
   annotate("text", x = 4e-10, y = 2e-9, label = lbl) +
@@ -265,7 +245,7 @@ p3=ggplot(dt.ann.ab.s3, aes(x = pa * pb, y = pab)) +
   theme(aspect = 1, panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 p3
 
-pdf("p3.pdf")
+pdf("p3.pdf", width = 4, height = 4)
 p3
 dev.off()
 ```
@@ -282,7 +262,7 @@ dt.vdjdb.pgen = fread("zcat vdjdb_ab_pgen.txt.gz") %>%
 
 Summarise probabilities
 
-```{r}
+```{r fig.width=4, fig.height=4}
 dt.vdjdb.pgen.s = dt.vdjdb.pgen %>%
   group_by(antigen.epitope) %>%
   summarise(pa = mean(genP_1mism_alpha, na.rm=T),
@@ -290,7 +270,7 @@ dt.vdjdb.pgen.s = dt.vdjdb.pgen %>%
             pab = mean(genP_1mism_alpha * genP_1mism_beta, na.rm=T))
 
 cres = with(dt.vdjdb.pgen.s, cor.test(pa, pb))
-lbl = paste0("R=", round(cres$estimate, 2), ", P=", round(cres$p.value, 3))
+lbl = paste0("R=", round(cres$estimate, 2), ", P=", round(cres$p.value, 2))
 
 p4=ggplot(dt.vdjdb.pgen.s, aes(x = pa, y = pb)) +
   annotate("text", x = 2e-5, y = 5e-6, label = lbl) +
@@ -302,7 +282,7 @@ p4=ggplot(dt.vdjdb.pgen.s, aes(x = pa, y = pb)) +
   theme_bw() +
   theme(aspect = 1, panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 p4
-pdf("p4.pdf")
+pdf("p4.pdf", width = 4, height = 4)
 p4
 dev.off()
 
@@ -319,7 +299,7 @@ p5=ggplot(dt.vdjdb.pgen.s, aes(x = pa * pb, y = pab)) +
   theme_bw() +
   theme(aspect = 1, panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 p5
-pdf("p5.pdf")
+pdf("p5.pdf", width = 4, height = 4)
 p5
 dev.off()
 
@@ -336,7 +316,7 @@ p6=ggplot(dt.vdjdb.pgen.s, aes(x = pb, y = pab)) +
   theme_bw() +
   theme(aspect = 1, panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 p6
-pdf("p6.pdf")
+pdf("p6.pdf", width = 4, height = 4)
 p6
 dev.off()
 ```
