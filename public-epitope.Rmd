@@ -16,6 +16,8 @@ library(ggplot2)
 library(reshape2)
 library(scales)
 library(stringr)
+library(forcats)
+library(Hmisc)
 
 select = dplyr::select
 ```
@@ -169,12 +171,16 @@ lm_eqn = function(ll){
     as.character(as.expression(eq))
 }
 
-rr = with(df.hip %>% filter(genP_1mism_rob > 0, freq > 0), cor.test(log10(genP_1mism_rob), log10(freq)))
-ll = with(df.hip %>% filter(genP_1mism_rob > 0, freq > 0), lm(log10(freq) ~ log10(genP_1mism_rob)))
+rr = with(df.hip %>% filter(genP_1mism_rob > 0, freq > 0), cor.test(log10(genP_1mism_rob/0.243), log10(freq)))
+ll = with(df.hip %>% filter(genP_1mism_rob > 0, freq > 0), lm(log10(freq) ~ log10(genP_1mism_rob/0.243)))
 
-p1=ggplot(df.hip, aes(x=genP_1mism_rob,y=freq)) +
+summary(ll)
+
+p1=ggplot(df.hip, aes(x=genP_1mism_rob/0.243,
+                      y=freq)) +
   stat_density_2d(geom = "hex", aes(fill=..density..), contour = F) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "black") +
+  geom_smooth(method = "lm", color = "red") +
   annotate(geom = "label", x = 1e-7, y = 1e-12, label = lm_eqn(ll), parse = T) +
   scale_x_log10("Theoretical rearrangement probability", limits=c(1e-13,1e-3), labels = fancy_scientific) +
   scale_y_log10("Observed rearrangement frequency", limits=c(1e-13,1e-3), labels = fancy_scientific) +
@@ -235,20 +241,21 @@ ggplot(df.hip %>% filter(incidence > 0), aes(x=genP_1mism_rob, y=convergence)) +
 ```
 
 ```{r}
-p2=ggplot(df.hip %>% filter(convergence > 0), aes(x=genP_1mism_rob,y=convergence)) +
+p2=ggplot(df.hip %>% filter(convergence > 0), aes(x=genP_1mism_rob,y=1-convergence)) +
   stat_density_2d(geom = "tile", aes(fill=..density..), contour = F) +
   geom_smooth(color = "red") +
   scale_x_log10("Theoretical rearrangement probability", limits=c(1e-13,1e-3), labels = fancy_scientific) +
-  scale_y_continuous("Unique variants per rearrangement (convergence)", expand = c(0,0), limits = c(-0.0001, 1.0001)) +
+  scale_y_continuous("Probability to rearrange same nucleotide variant", expand = c(0,0), limits = c(-0.0001, 1.0001)) +
   scale_fill_gradient("Density", low = "white", high = "black") +
   theme_bw() +
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
-        aspect.ratio = 1, legend.position = c(0.15, 0.25))
+        aspect.ratio = 1, legend.position = c(0.15, 0.75))
 p2
 ```
 
 ```{r}
 dt.epicount3 = df.hip %>%
+  as.data.frame %>%
   group_by(antigen.epitope) %>%
   summarise(total = n(), 
             found_frac = sum(count > 0) / total, 
@@ -367,9 +374,10 @@ print(a)
 
 ```{r}
 df.hip.odds = df.hip %>%
-  filter(freq > 0, genP_1mism_rob > 0) %>%
+  #filter(freq > 0) %>%
   mutate(odds = freq/genP_1mism_rob,
          log.odds = log(odds))
+
 df.hip.odds.s = df.hip.odds %>%
   group_by(antigen.epitope) %>%
   summarise(odds_med = median(odds)) %>%
@@ -385,7 +393,22 @@ ggplot(df.hip.odds, aes(x=antigen.epitope, group = antigen.epitope, y=odds/3, fi
   theme_bw()
 
 a = kruskal.test(odds ~ antigen.epitope, data = df.hip.odds)
-print(a)
+print(a$p.value)
+```
+
+```{r}
+df.hip.odds = df.hip %>%
+  filter(freq > 0, genP_1mism_rob > 0) %>%
+  mutate(odds = freq/genP_1mism_rob,
+         log.odds = log(odds))
+
+ggplot(df.hip.odds, aes(x=antigen.epitope, group = antigen.epitope, y=odds/3, fill = antigen.species)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  coord_flip() 
+
+a = kruskal.test(odds ~ antigen.epitope, data = df.hip.odds %>% mutate(antigen.epitope = as.factor(antigen.epitope)))
+print(a$p.value)
 ```
 
 ### By species
@@ -495,7 +518,8 @@ TukeyHSD(aa, "antigen.species")
 ```{r}
 df.hip.frac = df.hip %>%
   group_by(antigen.epitope) %>%
-  summarise(publ_5 = sum(incidence > 0.05) / n(),
+  summarise(publ_mean = median(incidence) / n(),
+            publ_5 = sum(incidence > 0.05) / n(),
             publ_10 = sum(incidence > 0.1) / n(),
             publ_15 = sum(incidence > 0.15) / n(),
             publ_20 = sum(incidence > 0.20) / n())
@@ -503,7 +527,11 @@ df.hip.frac = df.hip %>%
 df.hip.frac$antigen.epitope = with(df.hip.frac,
                                    factor(antigen.epitope, levels = antigen.epitope[order(-publ_5)]))
 
+df.hip.frac %>% filter(antigen.epitope %in% c("IPSINVHHY", "NLVPMVATV", "TPRVTGGGAM", "VTEHDTLLY")) %>%
+  print
+
 df.hip.frac = df.hip.frac %>%
+  select(-publ_mean) %>%
   melt
 
 df.hip.frac$publ = paste0(str_split_fixed(df.hip.frac$variable, "_", n = 2)[,2],"%")
@@ -554,6 +582,20 @@ p6=ggplot(df.hip.frac,
 p6
 ```
 
+Correlation test between population frequency and median generation probability
+
+```{r}
+df.corr.gppf = df.hip.gp %>%
+  group_by(antigen.epitope) %>%
+  summarise(genP_1mism_rob = median(genP_1mism_rob)) %>%
+  merge(df.hip %>%
+          group_by(antigen.epitope) %>%
+          summarise(publ_5 = sum(incidence > 0.05) / n()))
+
+cor.test(df.corr.gppf$genP_1mism_rob, df.corr.gppf$publ_5,
+         method = "spearman")
+```
+
 ## Epitope properties and rearrangement prob/selection
 
 ```{r}
@@ -561,7 +603,6 @@ df.hip.all.1 = df.hip.all %>% filter(mhc.class == "MHCI", nchar(antigen.epitope)
 ```
 
 ```{r}
-library(Hmisc)
 dt.epi.prop = rbindlist(lapply(strsplit(unique(df.hip.all.1$antigen.epitope), split = ""),
                              function(x) data.table(aa = x,
                                                     antigen.epitope = paste0(x, collapse = "")))) 
@@ -570,8 +611,24 @@ dt.epi.prop = rbind(dt.epi.prop %>% merge(fread("kidera.txt") %>% mutate(len = 1
                     dt.epi.prop %>% merge(fread("martin-lavery.txt") %>% melt, by = "aa", allow.cartesian = T)) %>%
   group_by(antigen.epitope, variable) %>%
   summarise(value = sum(value)) %>%
+  ungroup %>%
+  as.data.frame %>%
   group_by(variable) %>%
   mutate(value_c = as.factor(ifelse(variable == "len", as.integer(as.factor(value)), as.integer(cut2(value, g=4)))))
+```
+
+Show that there is no correlation between length and KF6/10
+
+```{r}
+dt.epipr1 = dt.epi.prop %>% filter(variable %in% c("len", "f6", "f10")) %>%
+  select(-value_c) %>% dcast(antigen.epitope ~ variable, value.var = "value") 
+
+summary(aov(f6 ~ I(as.factor(len)), dt.epipr1))
+summary(aov(f10 ~ I(as.factor(len)), dt.epipr1))
+
+summary(as.factor(dt.epipr1$len))
+
+epi9 = dt.epipr1 %>% filter(len == 9) %>% .$antigen.epitope
 ```
 
 ```{r}
@@ -630,6 +687,13 @@ dt.hip.prop.aov2 = dt.hip.prop %>%
   summarise(F_P = summary(aov(log(P1)~value_c1, data.table(P1 = genP_1mism_rob, value_c1 = as.integer(value_c))))[[1]][["F value"]][1],
             pa_P = summary(aov(log(P1)~value_c1, data.table(P1 = genP_1mism_rob, value_c1 = as.integer(value_c))))[[1]][["Pr(>F)"]][1]) %>%
   mutate(pa_P_adj = p.adjust(pa_P))
+
+dt.hip.prop.aov2.9 = dt.hip.prop %>%
+  filter(antigen.epitope %in% epi9, genP_1mism_rob > 0) %>%
+  group_by(variable) %>%
+  summarise(F_P9 = summary(aov(log(P1)~value_c1, data.table(P1 = genP_1mism_rob, value_c1 = as.integer(value_c))))[[1]][["F value"]][1],
+            pa_P9 = summary(aov(log(P1)~value_c1, data.table(P1 = genP_1mism_rob, value_c1 = as.integer(value_c))))[[1]][["Pr(>F)"]][1]) %>%
+  mutate(pa_P9_adj = p.adjust(pa_P9))
 ```
 
 ```{r}
@@ -646,10 +710,19 @@ dt.hip.prop.cor2 = dt.hip.prop %>%
   summarise(r_P = cor.test(genP_1mism_rob, value, method = "spearman")$estimate,
             pr_P = cor.test(genP_1mism_rob, value, method = "spearman")$p.value) %>%
   mutate(pr_P_adj = p.adjust(pr_P))
+
+dt.hip.prop.cor2.9 = dt.hip.prop %>%
+  filter(antigen.epitope %in% epi9, genP_1mism_rob > 0) %>%
+  group_by(variable) %>%
+  summarise(r_P9 = cor.test(genP_1mism_rob, value, method = "spearman")$estimate,
+            pr_P9 = cor.test(genP_1mism_rob, value, method = "spearman")$p.value) %>%
+  mutate(pr_P9_adj = p.adjust(pr_P9))
 ```
 
 ```{r}
-dt.hip.prop.1 = merge(dt.hip.prop.aov2, dt.hip.prop.cor2)
+dt.hip.prop.1 = merge(dt.hip.prop.aov2, dt.hip.prop.cor2) %>%
+  merge(dt.hip.prop.aov2.9) %>%
+  merge(dt.hip.prop.cor2.9)
 print(dt.hip.prop.1)
 
 print(dt.hip.prop.1 %>% filter(pr_P_adj < 0.01 & pa_P_adj < 0.01))
@@ -706,8 +779,8 @@ p7
 ## Figures
 
 ```{r}
-ggsave("figures/p1.pdf", p1, width = 4, height = 4)
-ggsave("figures/p2.pdf", p2, width = 4, height = 4)
+ggsave("figures/p1.pdf", p1, width = 5, height = 5)
+ggsave("figures/p2.pdf", p2, width = 5, height = 5)
 ggsave("figures/p3.pdf", p3, width = 4*2, height = 4)
 ggsave("figures/p4.pdf", p4, width = 4, height = 4)
 ggsave("figures/p5.pdf", p5, width = 4*2, height = 4)

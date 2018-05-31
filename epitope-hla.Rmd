@@ -89,7 +89,7 @@ good_hla = (dt.hip.hla.flat.summary %>% filter(sample_count_hla >= MIN_HLA_SAMPL
 good_hla_spec = intersect(good_hla_spec, good_hla) # HLA spec should be present in HIP HLA for comparison
 ```
 
-## HIP annotation data
+## General enrichment of HLA-restricted TCRs in HLA-matched and mismatched samples
 
 Load VDJdb annotations with 1 mismatch for HIP data (time consuming, ~ 2mln clonotypes)
 
@@ -127,15 +127,18 @@ dt.hip.s = dt.hip.m %>%
 Plot observed:expected number of rearrangements for matched and mismatched HLA specificity + donor HLA
 
 ```{r}
+library(ggbeeswarm)
 p12=ggplot(dt.hip.s, aes(x=hla_spec, y = obsexpratio)) +
-  geom_violin(aes(group = hla_spec), fill = "black") +
-  geom_point(data=dt.hip.s %>% filter(hla == hla_spec), color = "red") +
+  geom_boxplot(aes(group = hla_spec), color = "grey40", fill = "grey90") +
+  geom_quasirandom(aes(group = hla_spec), width = 0.1, fill = "black") +
+  geom_point(data=dt.hip.s %>% filter(hla == hla_spec), color = "red", size = 3) +
   ylab("Observed:expected number of rearrangements") + xlab("") +
   coord_flip() +
   theme_bw() +
-  theme(aspect = 0.5, panel.grid.major.x = element_line(colour="grey50", linetype="dashed"),
-        panel.grid.minor.x = element_line(colour="grey50", linetype="dotted"),
-        panel.grid.major.y = element_blank(), panel.grid.minor.y = element_blank())
+  theme(panel.grid.major.y = element_blank(), panel.grid.minor.y = element_blank())
+ # theme(aspect = 0.5)#, panel.grid.major.x = element_line(colour="grey50", linetype="dashed"))#),
+        #panel.grid.minor.x = element_line(colour="grey50", linetype="dotted"),
+        #panel.grid.major.y = element_blank(), panel.grid.minor.y = element_blank())
 
 p12
 ```
@@ -154,14 +157,93 @@ tmp %>% filter(match == T) %>% .$obsexpratio / tmp %>% filter(match != T) %>% .$
 
 ```{r}
 p13=ggplot(dt.hip.s, aes(x=hla_spec == hla, y = obsexpratio)) +
-  geom_boxplot(aes(fill = hla_spec == hla)) +
+  geom_boxplot(aes(color = hla_spec == hla), outlier.size = 2, size = 0.5) +
   #annotate("text", x = 1.5, y = 1.125, label = paste("italic(P) ==", round(res$p.value,3)), parse = T) +
-  scale_fill_brewer(guide = F, palette = "Set1") +
-  ylab("") + xlab("HLA match") +
+  scale_color_manual(guide = F, values = c("black", "red")) +
+  ylab("") + scale_x_discrete("Donor HLA match VDJdb HLA?", labels = c("No", "Yes")) +
   theme_bw() +
   theme(aspect = 2,
         panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 p13
+```
+
+## HLA-associated clonotypes
+
+Perform test as in Emerson et al
+
+```{r}
+dt.vdjdb = fread("rearr_model/VDJDB_fullP_rob_ageing.txt") 
+
+dt.epicount = dt.vdjdb %>%
+  group_by(antigen.epitope) %>%
+  summarise(total = n())
+
+good_epi = (dt.epicount %>% filter(total > 30))$antigen.epitope
+
+dt.vdjdb = dt.vdjdb %>% filter(antigen.epitope %in% good_epi)
+
+dt.assoc = dt.hip.m %>%
+  select(sample_id, cdr3, hla, hla_spec) %>%
+  unique %>%
+  group_by(cdr3) %>%
+  mutate(samples_cdr3 = length(unique(sample_id))) %>%
+  ungroup %>%
+  mutate(samples_total = length(unique(sample_id))) %>%
+  group_by(hla) %>%
+  mutate(samples_hla = length(unique(sample_id))) %>%
+  group_by(cdr3, hla, hla_spec, samples_cdr3, samples_hla, samples_total) %>%
+  summarise(samples_x = length(unique(sample_id)))
+
+dt.assoc = dt.assoc %>%
+  mutate(p.value = phyper(samples_x - 1, samples_hla, samples_total-samples_hla, samples_cdr3, lower.tail = F),
+         obsexp = samples_x / samples_hla / samples_cdr3 * samples_total) %>%
+  mutate(p.value.adj = p.adjust(p.value, method = "BH"))
+
+dt.assoc.1 = dt.assoc %>%
+  merge(dt.vdjdb %>% select(cdr3, antigen.epitope, antigen.species, genP_1mism_rob) %>% unique)
+```
+
+```{r}
+fancy_scientific = function(l) {
+     # turn in to character string in scientific notation
+     l = format(l, scientific = TRUE)
+     # quote the part before the exponent to keep all the digits
+     l = gsub("^(.*)e", "'\\1'e", l)
+     # turn the 'e+' into plotmath format
+     l = gsub("e", "%*%10^", l)
+     # return this as an expression
+     parse(text=l)
+}
+
+p12a1 = ggplot(dt.assoc.1 %>% filter(p.value.adj < 0.0001), aes(x = genP_1mism_rob, 
+                                                     y = -log10(p.value.adj),
+                                                     color = hla_spec == hla)) +
+  geom_density2d(data=dt.assoc.1 %>% filter(p.value.adj < 0.05)) +
+  geom_point() +
+  scale_color_manual("HLA match", values = c("black", "red"), labels = c("no", "yes")) +
+  scale_x_log10("Theoretical rearrangement probability", labels = fancy_scientific) +
+  ylab("-log10 Enrichment P-value") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        aspect.ratio = 1, legend.position = "bottom")
+p12a1
+
+p12a2 = ggplot(dt.assoc.1 %>% filter(p.value.adj < 0.05), aes(x = antigen.species,
+                               group = paste(antigen.species, hla_spec == hla),
+                               y = -log10(p.value.adj),
+                               color = hla_spec == hla)) +
+  geom_boxplot() +
+  scale_color_manual(guide = F, values = c("black", "red")) +
+  xlab("") + ylab("-log10 Enrichment P-value") +
+  theme_bw()  +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        aspect.ratio = 1, legend.position = c(0.2, 0.8))
+p12a2
+
+ggsave("figures/p12_A1.pdf", p12a1, width = 4, height = 4)
+ggsave("figures/p12_A2.pdf", p12a2, width = 4, height = 4)
 ```
 
 ## CMV clonal expansions
@@ -211,14 +293,16 @@ Plotting CMV-specific clonotype expansions
 
 ```{r}
 p14=ggplot(dt.hip.p.s %>% filter(antigen.species == "CMV"), 
-       aes(x=freq_ratio, color = cmv)) +
-  geom_vline(xintercept = 1, linetype = "dashed") +
-  stat_ecdf() + 
-  ylab("CDF") + 
-  scale_x_continuous("Ratio of frequency in HLA-matched and -mismatched samples", breaks = c(0,1,2,3,4,5), limits=c(0,5.5)) +
+       aes(x = log2(freq_ratio), color = cmv)) +
+  #geom_vline(xintercept = 1, linetype = "dashed") +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_freqpoly(aes(y=..density..), binwidth = 0.2, size = 1) +
+  #scale_y_log10(breaks = c(0.1,1,10)) +
+  scale_x_continuous("Log2 read frequency ratio", limits=c(-4,4)) +
+  ylab("Density") +
   scale_color_brewer("CMV status", palette = "Set1") +
   theme_bw() +
-  theme(aspect = 0.5, legend.direction = "vertical", legend.position = c(0.9, 0.2), 
+  theme(aspect = 0.5, legend.direction = "vertical", legend.position = c(0.1, 0.8), 
         panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 
 p14
@@ -242,15 +326,17 @@ dt.hip.p.ebv = dt.hip.p.s %>% filter(antigen.species == "EBV",
   mutate(p = count / unique_cdrs, sd = sqrt(count * p * (1-p)))
 
 p15=ggplot(dt.hip.p.ebv, # Only 3 clonotypes here
-       aes(x=enriched, y = count, fill = enriched)) +
+       aes(x=enriched, y = count, color = enriched, fill = enriched)) +
   geom_errorbar(aes(ymin = count, ymax = count + 1.96 * sd), width = 0.5) +
-  geom_bar(stat="identity", color = "black") +
-  facet_wrap(~hla_spec, scales = "free", ncol = 2) +
-  ylab("# clonotypes") + 
+  geom_bar(stat="identity") +
+  facet_wrap(~hla_spec, scales = "free", ncol = 3) +
+  ylab("# VDJdb clonotypes") + 
   xlab("") +
-  scale_fill_brewer("More in matched HLA", palette = "Set1") +
+  scale_color_manual("More in matched HLA", values = c("black", "red")) +
+  scale_fill_manual("More in matched HLA", values = c("black", "red")) +
   theme_bw() +
-  theme(aspect = 0.8, legend.position = "bottom",
+  theme(#aspect = 1, 
+        legend.position = "bottom",
         axis.title.x=element_blank(),
         axis.text.x=element_blank(),
         axis.ticks.x=element_blank(),
@@ -386,7 +472,7 @@ dev.off()
 
 ```{r}
 ggsave("figures/p12.pdf", p12, width = 2*4, height = 4)
-ggsave("figures/p13.pdf", p13, width = 4, height = 4)
+ggsave("figures/p13.pdf", p13, width = 2, height = 2)
 ggsave("figures/p14.pdf", p14, width = 2*4, height = 4)
-ggsave("figures/p15.pdf", p15, width = 4, height = 8)
+ggsave("figures/p15.pdf", p15, width = 6, height = 5)
 ```
